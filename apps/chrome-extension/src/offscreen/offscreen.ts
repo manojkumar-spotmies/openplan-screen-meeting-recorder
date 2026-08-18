@@ -4,6 +4,9 @@ import {
   StartRecordingResponseData,
   StopRecordingPayload,
   StopRecordingResponseData,
+  SetMicrophoneEnabledPayload,
+  SetSystemAudioEnabledPayload,
+  RecordingControlResponseData,
   ApiResponse,
   ApiErrorResponse,
 } from '@openplan/contracts';
@@ -64,6 +67,28 @@ async function handleOffscreenMessage(
     case 'STOP_RECORDING': {
       const payload = message.payload as StopRecordingPayload;
       return await handleStopRecording(payload, meta);
+    }
+    case 'PAUSE_RECORDING': {
+      return await handleControlAction(() => recorderService.pauseRecording(), meta, 'ERR_RECORDER_PAUSE_FAILED');
+    }
+    case 'RESUME_RECORDING': {
+      return await handleControlAction(() => recorderService.resumeRecording(), meta, 'ERR_RECORDER_RESUME_FAILED');
+    }
+    case 'SET_MICROPHONE_ENABLED': {
+      const payload = message.payload as SetMicrophoneEnabledPayload;
+      return await handleControlAction(
+        () => recorderService.setMicrophoneEnabled(payload.enabled),
+        meta,
+        'ERR_MICROPHONE_TOGGLE_FAILED'
+      );
+    }
+    case 'SET_SYSTEM_AUDIO_ENABLED': {
+      const payload = message.payload as SetSystemAudioEnabledPayload;
+      return await handleControlAction(
+        () => recorderService.setSystemAudioEnabled(payload.enabled),
+        meta,
+        'ERR_SYSTEM_AUDIO_TOGGLE_FAILED'
+      );
     }
     case 'GET_SESSION_STATUS': {
       const current = recorderService.getCurrentSession();
@@ -182,6 +207,39 @@ async function handleStopRecording(
       error: {
         code: 'ERR_RECORDER_STOP_FAILED',
         message: err instanceof Error ? err.message : 'Failed to stop recording service',
+      },
+      meta,
+    };
+  }
+}
+
+async function handleControlAction(
+  action: () => Promise<{
+    sessionId: string;
+    status: StartRecordingResponseData['status'];
+    isPaused: boolean;
+    microphoneEnabled: boolean;
+    systemAudioEnabled: boolean;
+    hasMicrophone: boolean;
+    hasSystemAudio: boolean;
+  }>,
+  meta: { timestamp: string; requestId: string },
+  errorCode: string
+): Promise<ApiResponse<RecordingControlResponseData> | ApiErrorResponse> {
+  try {
+    const state = await action();
+    return {
+      success: true,
+      data: state,
+      meta,
+    };
+  } catch (err) {
+    logger.warn(`Recording control action failed (${errorCode}):`, err);
+    return {
+      success: false,
+      error: {
+        code: errorCode,
+        message: err instanceof Error ? err.message : 'Recording control action failed',
       },
       meta,
     };

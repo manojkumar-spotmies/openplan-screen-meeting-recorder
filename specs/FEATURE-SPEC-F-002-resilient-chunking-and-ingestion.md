@@ -640,7 +640,9 @@ TEST: External Messaging Origin Restriction
 
 [ ] AC-M2-16: Given a session in WAITING_FOR_CHUNKS, if all missing chunks are uploaded before gracePeriodEndsAt, then the session status transitions to PROCESSING; if the timer expires, the status becomes INCOMPLETE and late uploads are rejected with HTTP 400 ERR_SESSION_EXPIRED.
 
-[ ] AC-M2-17: Given the OpenPlan extension UI and web app flow, no application-level Stop Recording, Pause, or Resume buttons are exposed to meeting participants, ensuring recording is driven strictly by automatic meeting lifecycles while documenting Chrome's native stop-sharing bar as an un-bypassable browser-level mechanism.
+[x] AC-M2-17 (SUPERSEDED by F-005): Originally, no application-level Stop Recording, Pause, or Resume buttons were exposed to meeting participants, so recording was driven strictly by automatic meeting lifecycles, with Chrome's native stop-sharing bar documented as the only un-bypassable browser-level mechanism. F-005 (Manual Recording Controls / Floating Widget — see PRD.md Section 8) intentionally introduces a compact, participant-facing Stop/Pause/Resume/Microphone/System-Audio control. This AC is retained for history; see AC-M2-17a below for the current behavior.
+
+[ ] AC-M2-17a: Given the F-005 floating widget, manual Stop/Pause/Resume/Microphone/System-Audio actions route exclusively through the existing RecorderService/offscreen/service-worker messaging pipeline (no duplicate recording logic), and automatic meeting-end detection (DOM call-end, beforeunload, tab close/navigation, native stop-bar track-end) still stops/finalizes the session correctly regardless of paused or muted state at the time the meeting ends.
 ```
 
 ---
@@ -656,7 +658,7 @@ The following capabilities are explicitly EXCLUDED from Milestone 2:
   - OpenPlan Video Catalog & Web Player UI: Video browsing dashboard, playback UI, and signed URL generation belong to Milestone 4.
   - OAuth / JWT Production Authentication: F-002 relies exclusively on the development mock authentication boundary (x-user-id: dev-user-1).
   - Video Editing, Trimming, & AI Transcription: Explicit non-goals per PRD Section 3.3.
-  - Participant Manual Recording Controls: Participant-facing Stop, Pause, or Resume buttons are explicitly prohibited by PRD/F-002 specs.
+  - Participant Manual Recording Controls: Now IN SCOPE under F-005 (Manual Recording Controls / Floating Widget, PRD.md Section 8) — see AC-M2-17/AC-M2-17a above. F-002's chunking, sync, and stop/finalization logic itself remains unchanged; F-005 only adds a UI entry point that calls the same existing pipeline.
   - Suppressing Chrome Native Security Indicator: Chrome browser's floating "Stop sharing" UI cannot be removed by Manifest V3 extensions; attempting to bypass it is out of scope.
 ```
 

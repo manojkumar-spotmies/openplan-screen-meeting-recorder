@@ -116,6 +116,7 @@ N/A - Internal cost-saving tool.
 | US-002 | As a user on a bad connection, I want my recording to sync in small chunks so I don't lose the whole video. | ðŸ”´ P0 | F-002 |
 | US-003 | As a user without mic permissions, I want to be warned but still be able to record the screen. | ðŸŸ  P1 | F-001 |
 | US-004 | As a user, I want the recording to auto-stop if I close or leave the Google Meet tab. | ðŸŸ¡ P2 | F-004 |
+| US-005 | As a user, I want a small floating control while recording so I can stop, pause/resume, or mute my mic/system audio without opening the extension popup. | ðŸŸ¡ P2 | F-005 |
 
 ---
 
@@ -166,6 +167,20 @@ N/A - Internal cost-saving tool.
 | Req ID | Requirement | Priority |
 |--------|-------------|----------|
 | F-004-R01 | The extension **will** monitor the DOM or tab state of `meet.google.com`. | ðŸŸ¡ P2 |
+
+### Feature F-005 â€” Manual Recording Controls (Floating Widget)
+**Priority:** ðŸŸ¡ P2
+**Summary:** A small floating control, injected into the Google Meet tab while a recording is active, giving the user direct control over Stop, Pause/Resume, Microphone, and System Audio without opening the extension popup. Supersedes the original AC-M2-17 restriction (see FEATURE-SPEC-F-002 Section 10 and PROGRESS.md) which assumed no participant-facing controls would ever be exposed.
+
+#### Functional Requirements
+| Req ID | Requirement | Priority |
+|--------|-------------|----------|
+| F-005-R01 | The extension **must** show a compact, unobtrusive recording indicator while a recording is active, without blocking the Meet UI or Chrome's native "Stop sharing" bar. | ðŸŸ¡ P2 |
+| F-005-R02 | Clicking the indicator **must** expand a small panel with Stop Recording, Microphone toggle, System Audio toggle, and Pause/Resume Recording. | ðŸŸ¡ P2 |
+| F-005-R03 | Stop **must** invoke the existing F-001/F-002 stop-and-finalize flow (final chunk flush, sync drain, `/stop` manifest) unmodified. | ðŸ”´ P0 |
+| F-005-R04 | Pause/Resume **must** only pause/resume the `MediaRecorder`; it must never call `/stop` or discard the session. | ðŸ”´ P0 |
+| F-005-R05 | Microphone/System Audio toggles **must** mute/unmute the existing track(s) in place (no new `AudioContext`, no second recording pipeline) and act independently of each other and of Pause/Stop. | ðŸ”´ P0 |
+| F-005-R06 | Automatic meeting-end detection (tab close, navigation, Meet DOM "left the call", `beforeunload`, native stop bar) **must** continue to stop/finalize the session regardless of paused/muted state. | ðŸ”´ P0 |
 
 ---
 

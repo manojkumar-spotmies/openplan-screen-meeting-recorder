@@ -13,6 +13,8 @@ export class RecorderService {
     micStreamRef = null;
     isStopping = false;
     stopPromiseResolver = null;
+    microphoneEnabled = true;
+    systemAudioEnabled = true;
     async startRecording(options) {
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
             throw new Error('Recording session already active');
@@ -29,6 +31,10 @@ export class RecorderService {
         }
         this.activeCompositeStream = new MediaStream(compositeTracks);
         // Initial session entity setup
+        const hasMicrophone = Boolean(micStream && micStream.getAudioTracks().length > 0);
+        const hasSystemAudio = displayStream.getAudioTracks().length > 0;
+        this.microphoneEnabled = true;
+        this.systemAudioEnabled = true;
         const now = new Date().toISOString();
         this.currentSession = {
             sessionId,
@@ -40,6 +46,11 @@ export class RecorderService {
             updatedAt: now,
             totalChunks: 0,
             fileSizeBytes: 0,
+            isPaused: false,
+            microphoneEnabled: true,
+            systemAudioEnabled: true,
+            hasMicrophone,
+            hasSystemAudio,
         };
         // Save session in IndexedDB
         await createSession(this.currentSession);
@@ -83,13 +94,18 @@ export class RecorderService {
         return this.currentSession;
     }
     async stopRecording(reason = 'USER_ACTION') {
-        if (!this.mediaRecorder || !this.currentSession) {
+        if (!this.currentSession) {
             throw new Error('No active recording session to stop');
         }
-        if (this.isStopping) {
-            if (this.currentSession.status === 'STOPPED') {
-                return this.currentSession;
-            }
+        // Already fully stopped by a concurrent trigger (e.g. the native "Stop sharing"
+        // bar's track.onended racing the Meet call-end detector's STOP_RECORDING message)
+        // — mediaRecorder/isStopping are already reset by resetState(), so return the
+        // finalized session idempotently instead of throwing.
+        if (this.currentSession.status === 'STOPPED') {
+            return this.currentSession;
+        }
+        if (!this.mediaRecorder) {
+            throw new Error('No active recording session to stop');
         }
         this.isStopping = true;
         logger.info(`Stopping recording session ${this.currentSession.sessionId} (reason: ${reason})`);
@@ -112,6 +128,80 @@ export class RecorderService {
     }
     getSequenceNumber() {
         return this.sequenceNumber;
+    }
+    async pauseRecording() {
+        if (!this.mediaRecorder || !this.currentSession) {
+            throw new Error('No active recording session to pause');
+        }
+        if (this.mediaRecorder.state === 'recording') {
+            this.mediaRecorder.pause();
+            this.currentSession.isPaused = true;
+            await updateSession(this.currentSession.sessionId, { isPaused: true });
+            logger.info(`Recording session ${this.currentSession.sessionId} paused`);
+        }
+        return this.getControlState();
+    }
+    async resumeRecording() {
+        if (!this.mediaRecorder || !this.currentSession) {
+            throw new Error('No active recording session to resume');
+        }
+        if (this.mediaRecorder.state === 'paused') {
+            this.mediaRecorder.resume();
+            this.currentSession.isPaused = false;
+            await updateSession(this.currentSession.sessionId, { isPaused: false });
+            logger.info(`Recording session ${this.currentSession.sessionId} resumed`);
+        }
+        return this.getControlState();
+    }
+    async setMicrophoneEnabled(enabled) {
+        if (!this.currentSession) {
+            throw new Error('No active recording session');
+        }
+        const micTracks = this.micStreamRef ? this.micStreamRef.getAudioTracks() : [];
+        if (micTracks.length === 0) {
+            throw new Error('No microphone track available for this recording');
+        }
+        // Disabling (not stopping) the track keeps the same recording stream/graph intact;
+        // a disabled MediaStreamTrack outputs silence rather than being removed.
+        micTracks.forEach((track) => {
+            track.enabled = enabled;
+        });
+        this.microphoneEnabled = enabled;
+        this.currentSession.microphoneEnabled = enabled;
+        await updateSession(this.currentSession.sessionId, { microphoneEnabled: enabled });
+        logger.info(`Microphone ${enabled ? 'enabled' : 'disabled'} for session ${this.currentSession.sessionId}`);
+        return this.getControlState();
+    }
+    async setSystemAudioEnabled(enabled) {
+        if (!this.currentSession) {
+            throw new Error('No active recording session');
+        }
+        const systemAudioTracks = this.displayStreamRef ? this.displayStreamRef.getAudioTracks() : [];
+        if (systemAudioTracks.length === 0) {
+            throw new Error('No system audio track available for this recording');
+        }
+        systemAudioTracks.forEach((track) => {
+            track.enabled = enabled;
+        });
+        this.systemAudioEnabled = enabled;
+        this.currentSession.systemAudioEnabled = enabled;
+        await updateSession(this.currentSession.sessionId, { systemAudioEnabled: enabled });
+        logger.info(`System audio ${enabled ? 'enabled' : 'disabled'} for session ${this.currentSession.sessionId}`);
+        return this.getControlState();
+    }
+    getControlState() {
+        if (!this.currentSession || !this.mediaRecorder) {
+            throw new Error('No active recording session');
+        }
+        return {
+            sessionId: this.currentSession.sessionId,
+            status: this.currentSession.status,
+            isPaused: this.mediaRecorder.state === 'paused',
+            microphoneEnabled: this.microphoneEnabled,
+            systemAudioEnabled: this.systemAudioEnabled,
+            hasMicrophone: Boolean(this.currentSession.hasMicrophone),
+            hasSystemAudio: Boolean(this.currentSession.hasSystemAudio),
+        };
     }
     async handleDataAvailable(event) {
         if (!event.data || event.data.size === 0 || !this.currentSession) {

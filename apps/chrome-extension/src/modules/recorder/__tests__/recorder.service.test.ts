@@ -75,10 +75,25 @@ class MockMediaRecorder {
 
   public stop() {
     this.state = 'inactive';
-    if (this.onstop) {
-      this.onstop();
+    queueMicrotask(() => {
+      if (this.onstop) {
+        this.onstop();
+      }
+    });
+  }
+
+  public pause() {
+    if (this.state === 'recording') {
+      this.state = 'paused';
     }
   }
+
+  public resume() {
+    if (this.state === 'paused') {
+      this.state = 'recording';
+    }
+  }
+
 
   // Helper for tests to simulate chunk emission
   public async emitChunk(dataStr: string) {
@@ -208,5 +223,101 @@ describe('RecorderService (recorder.service.ts)', () => {
     });
 
     expect(session.captureMode).toBe('SCREEN_SYSTEM');
+  });
+
+  describe('manual recording controls (widget)', () => {
+    async function startControlTestSession(sessionId: string) {
+      const videoTrack = createMockTrack('video', `v-${sessionId}`);
+      const sysAudioTrack = createMockTrack('audio', `sys-${sessionId}`);
+      const micAudioTrack = createMockTrack('audio', `mic-${sessionId}`);
+      const displayStream = createMockStream([videoTrack, sysAudioTrack]);
+      const micStream = createMockStream([micAudioTrack]);
+
+      await recorderService.startRecording({
+        sessionId,
+        title: 'Control Test',
+        displayStream,
+        micStream,
+      });
+
+      const mockRecorder = (recorderService as unknown as { mediaRecorder: MockMediaRecorder }).mediaRecorder;
+      return { mockRecorder, sysAudioTrack, micAudioTrack };
+    }
+
+    it('pauses the MediaRecorder without stopping the session', async () => {
+      const { mockRecorder } = await startControlTestSession('pause-test-session');
+
+      const state = await recorderService.pauseRecording();
+
+      expect(mockRecorder.state).toBe('paused');
+      expect(state.isPaused).toBe(true);
+      expect(recorderService.getCurrentSession()?.status).toBe('RECORDING');
+      const dbSession = await getSession('pause-test-session');
+      expect(dbSession?.isPaused).toBe(true);
+      expect(dbSession?.status).toBe('RECORDING');
+    });
+
+    it('resumes a paused MediaRecorder and continues the same session', async () => {
+      const { mockRecorder } = await startControlTestSession('resume-test-session');
+
+      await recorderService.pauseRecording();
+      const state = await recorderService.resumeRecording();
+
+      expect(mockRecorder.state).toBe('recording');
+      expect(state.isPaused).toBe(false);
+      expect(recorderService.getCurrentSession()?.sessionId).toBe('resume-test-session');
+    });
+
+    it('toggles the microphone track without stopping the recording', async () => {
+      const { micAudioTrack, sysAudioTrack } = await startControlTestSession('mic-toggle-session');
+
+      const offState = await recorderService.setMicrophoneEnabled(false);
+      expect(micAudioTrack.enabled).toBe(false);
+      expect(sysAudioTrack.enabled).toBe(true);
+      expect(offState.microphoneEnabled).toBe(false);
+      expect(recorderService.getCurrentSession()?.status).toBe('RECORDING');
+
+      const onState = await recorderService.setMicrophoneEnabled(true);
+      expect(micAudioTrack.enabled).toBe(true);
+      expect(onState.microphoneEnabled).toBe(true);
+    });
+
+    it('toggles system audio without stopping the recording or affecting the microphone', async () => {
+      const { micAudioTrack, sysAudioTrack } = await startControlTestSession('sysaudio-toggle-session');
+
+      const offState = await recorderService.setSystemAudioEnabled(false);
+      expect(sysAudioTrack.enabled).toBe(false);
+      expect(micAudioTrack.enabled).toBe(true);
+      expect(offState.systemAudioEnabled).toBe(false);
+
+      const onState = await recorderService.setSystemAudioEnabled(true);
+      expect(sysAudioTrack.enabled).toBe(true);
+      expect(onState.systemAudioEnabled).toBe(true);
+    });
+
+    it('rejects microphone toggle when no microphone track is present', async () => {
+      const videoTrack = createMockTrack('video', 'v-no-mic');
+      const sysAudioTrack = createMockTrack('audio', 'sys-no-mic');
+      const displayStream = createMockStream([videoTrack, sysAudioTrack]);
+
+      await recorderService.startRecording({
+        sessionId: 'no-mic-session',
+        title: 'No Mic Test',
+        displayStream,
+        micStream: null,
+      });
+
+      await expect(recorderService.setMicrophoneEnabled(false)).rejects.toThrow();
+    });
+
+    it('does not call the backend /stop flow when pausing (pause !== stop)', async () => {
+      const { mockRecorder } = await startControlTestSession('pause-not-stop-session');
+
+      await recorderService.pauseRecording();
+
+      // stop() must never have been invoked on the underlying MediaRecorder
+      expect(mockRecorder.state).toBe('paused');
+      expect(recorderService.getCurrentSession()).not.toBeNull();
+    });
   });
 });

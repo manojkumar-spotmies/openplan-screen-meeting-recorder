@@ -18,6 +18,8 @@
   "references": [
     { "path": "./packages/contracts" },
     { "path": "./packages/core" },
-    { "path": "./apps/chrome-extension" }
+    { "path": "./apps/chrome-extension" },
+    { "path": "./apps/backend" }
   ]
 }
+

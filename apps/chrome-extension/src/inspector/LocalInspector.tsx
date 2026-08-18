@@ -16,10 +16,11 @@ export function concatenateChunksToBlob(chunks: LocalVideoChunk[]): Blob {
     return new Blob([], { type: 'video/webm' });
   }
   const sorted = [...chunks].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
-  const blobs = sorted.map((c) => c.blob);
+  const blobs = sorted.map((c) => c.blob).filter((b): b is Blob => b !== undefined);
   const mimeType = sorted[0]?.mimeType || 'video/webm';
   return new Blob(blobs, { type: mimeType });
 }
+
 
 export const LocalInspector: React.FC = () => {
   const [sessions, setSessions] = useState<LocalVideoSession[]>([]);

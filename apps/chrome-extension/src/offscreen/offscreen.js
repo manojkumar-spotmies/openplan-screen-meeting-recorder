@@ -42,6 +42,20 @@ async function handleOffscreenMessage(message) {
             const payload = message.payload;
             return await handleStopRecording(payload, meta);
         }
+        case 'PAUSE_RECORDING': {
+            return await handleControlAction(() => recorderService.pauseRecording(), meta, 'ERR_RECORDER_PAUSE_FAILED');
+        }
+        case 'RESUME_RECORDING': {
+            return await handleControlAction(() => recorderService.resumeRecording(), meta, 'ERR_RECORDER_RESUME_FAILED');
+        }
+        case 'SET_MICROPHONE_ENABLED': {
+            const payload = message.payload;
+            return await handleControlAction(() => recorderService.setMicrophoneEnabled(payload.enabled), meta, 'ERR_MICROPHONE_TOGGLE_FAILED');
+        }
+        case 'SET_SYSTEM_AUDIO_ENABLED': {
+            const payload = message.payload;
+            return await handleControlAction(() => recorderService.setSystemAudioEnabled(payload.enabled), meta, 'ERR_SYSTEM_AUDIO_TOGGLE_FAILED');
+        }
         case 'GET_SESSION_STATUS': {
             const current = recorderService.getCurrentSession();
             return {
@@ -71,7 +85,10 @@ async function handleStartRecording(payload, meta) {
                 height: { ideal: 720 },
                 frameRate: { ideal: 30 },
             },
-            audio: true,
+            audio: {
+                suppressLocalAudioPlayback: false,
+            },
+            systemAudio: 'include',
         });
     }
     catch (err) {
@@ -148,6 +165,27 @@ async function handleStopRecording(payload, meta) {
             error: {
                 code: 'ERR_RECORDER_STOP_FAILED',
                 message: err instanceof Error ? err.message : 'Failed to stop recording service',
+            },
+            meta,
+        };
+    }
+}
+async function handleControlAction(action, meta, errorCode) {
+    try {
+        const state = await action();
+        return {
+            success: true,
+            data: state,
+            meta,
+        };
+    }
+    catch (err) {
+        logger.warn(`Recording control action failed (${errorCode}):`, err);
+        return {
+            success: false,
+            error: {
+                code: errorCode,
+                message: err instanceof Error ? err.message : 'Recording control action failed',
             },
             meta,
         };

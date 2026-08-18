@@ -19,6 +19,31 @@ export type CaptureMode =
   | 'SCREEN_MIC' 
   | 'SCREEN_ONLY';
 
+export interface VideoSession {
+  id: string; // UUIDv4
+  userId: string; // Openplan User ID
+  title: string;
+  sourceTabUrl?: string;
+  status: SessionStatus;
+  totalChunksExpected?: number;
+  totalChunksReceived: number;
+  durationSeconds?: number;
+  fileSizeBytes?: number;
+  gracePeriodEndsAt?: string; // ISO 8601
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VideoChunk {
+  id: string; // UUIDv4
+  sessionId: string;
+  sequenceNumber: number;
+  checksumSha256: string;
+  byteSize: number;
+  storageKey: string;
+  uploadedAt: string;
+}
+
 export interface LocalVideoSession {
   sessionId: string;
   title: string;
@@ -31,6 +56,14 @@ export interface LocalVideoSession {
   durationSeconds?: number;
   fileSizeBytes?: number;
   errorMessage?: string;
+  // Manual recording controls (F-003 floating widget). RECORDING status is preserved
+  // while paused; pause never becomes a distinct SessionStatus so backend/F-002 semantics
+  // are untouched.
+  isPaused?: boolean;
+  microphoneEnabled?: boolean;
+  systemAudioEnabled?: boolean;
+  hasMicrophone?: boolean;
+  hasSystemAudio?: boolean;
 }
 
 export interface LocalVideoChunk {
@@ -39,9 +72,12 @@ export interface LocalVideoChunk {
   timestamp: string; // ISO 8601
   byteSize: number;
   mimeType: string; // e.g. "video/webm;codecs=vp8,opus"
-  blob: Blob; // Raw binary chunk blob
+  checksumSha256?: string; // 64-character hex string
+  blob?: Blob; // Present while unsynced; purged (undefined) post-ACK
+  synced?: boolean; // Set to true upon HTTP 200 ACK
   isFinal: boolean;
 }
+
 
 export interface SessionManifest {
   sessionId: string;
@@ -49,3 +85,4 @@ export interface SessionManifest {
   sequenceChecksums: Record<number, string>;
   finalChunkTimestamp: string;
 }
+

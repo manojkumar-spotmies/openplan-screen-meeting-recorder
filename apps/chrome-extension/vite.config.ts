@@ -21,7 +21,7 @@ function copyManifestPlugin(): Plugin {
       if (Array.isArray(manifest.content_scripts)) {
         manifest.content_scripts = manifest.content_scripts.map((cs: { matches: string[]; js: string[] }) => ({
           ...cs,
-          js: cs.js ? cs.js.map((script: string) => script.replace(/\.ts$/, '.js')) : [],
+          js: cs.js ? cs.js.map((script: string) => script.replace(/\.tsx?$/, '.js')) : [],
         }));
       }
 
@@ -42,6 +42,7 @@ export default defineConfig({
         offscreen: resolve(__dirname, 'src/offscreen/offscreen.html'),
         background: resolve(__dirname, 'src/background/service-worker.ts'),
         content: resolve(__dirname, 'src/content/meet-detector.ts'),
+        widget: resolve(__dirname, 'src/content/recording-widget.tsx'),
       },
       output: {
         entryFileNames: (chunkInfo) => {
@@ -50,6 +51,9 @@ export default defineConfig({
           }
           if (chunkInfo.name === 'content') {
             return 'src/content/meet-detector.js';
+          }
+          if (chunkInfo.name === 'widget') {
+            return 'src/content/recording-widget.js';
           }
           return 'assets/[name]-[hash].js';
         },

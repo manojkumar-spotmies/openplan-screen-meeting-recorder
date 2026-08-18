@@ -182,8 +182,9 @@ The repository is structured around a standalone Chrome Extension workspace and 
 │   │   ├── src/
 │   │   │   ├── background/            # MV3 Service Worker & Tab Monitor
 │   │   │   │   └── service-worker.ts
-│   │   │   ├── content/               # DOM/Meet event detection
-│   │   │   │   └── meet-detector.ts
+│   │   │   ├── content/               # DOM/Meet event detection + F-005 floating widget
+│   │   │   │   ├── meet-detector.ts
+│   │   │   │   └── recording-widget.tsx
 │   │   │   ├── popup/                 # Primary Extension Popup UI
 │   │   │   │   └── PopupApp.tsx
 │   │   │   ├── inspector/             # Milestone 1 Local Inspector Player

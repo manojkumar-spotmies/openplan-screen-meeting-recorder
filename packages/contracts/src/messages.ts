@@ -2,9 +2,13 @@ import { SessionStatus, CaptureMode } from './entities.js';
 
 export type MessageTarget = 'SERVICE_WORKER' | 'OFFSCREEN' | 'POPUP' | 'INSPECTOR';
 
-export type ExtensionAction = 
+export type ExtensionAction =
   | 'START_RECORDING'
   | 'STOP_RECORDING'
+  | 'PAUSE_RECORDING'
+  | 'RESUME_RECORDING'
+  | 'SET_MICROPHONE_ENABLED'
+  | 'SET_SYSTEM_AUDIO_ENABLED'
   | 'GET_SESSION_STATUS'
   | 'RECORDING_STATE_CHANGED'
   | 'OFFSCREEN_ERROR';
@@ -19,9 +23,24 @@ export interface ExtensionMessage<T = unknown> {
   };
 }
 
+export interface ExternalStartRecordingMessage {
+  target: 'SERVICE_WORKER';
+  action: 'START_RECORDING';
+  payload: {
+    sessionId: string;
+    title: string;
+    sourceTabUrl?: string;
+  };
+  meta: {
+    timestamp: string;
+    requestId: string;
+  };
+}
+
 export interface StartRecordingPayload {
   title: string;
   sourceTabUrl?: string;
+  sessionId?: string;
 }
 
 export interface StartRecordingResponseData {
@@ -42,10 +61,44 @@ export interface StopRecordingResponseData {
   durationSeconds: number;
 }
 
+export interface PauseRecordingPayload {
+  sessionId: string;
+}
+
+export interface ResumeRecordingPayload {
+  sessionId: string;
+}
+
+export interface SetMicrophoneEnabledPayload {
+  sessionId: string;
+  enabled: boolean;
+}
+
+export interface SetSystemAudioEnabledPayload {
+  sessionId: string;
+  enabled: boolean;
+}
+
+export interface RecordingControlResponseData {
+  sessionId: string;
+  status: SessionStatus;
+  isPaused: boolean;
+  microphoneEnabled: boolean;
+  systemAudioEnabled: boolean;
+  hasMicrophone: boolean;
+  hasSystemAudio: boolean;
+}
+
 export interface RecordingStateChangedPayload {
   sessionId: string;
   status: SessionStatus;
   chunksRecorded: number;
   activeCaptureMode: CaptureMode;
   errorMessage?: string;
+  isPaused?: boolean;
+  microphoneEnabled?: boolean;
+  systemAudioEnabled?: boolean;
+  hasMicrophone?: boolean;
+  hasSystemAudio?: boolean;
 }
+
