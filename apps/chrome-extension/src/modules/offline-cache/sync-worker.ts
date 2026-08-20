@@ -172,10 +172,23 @@ export class SyncWorker {
       checksum = await computeSha256(chunk.blob);
     }
 
+    // MediaRecorder's blob.type is typically a codec-qualified string like
+    // "video/webm;codecs=vp9,opus" (unquoted, comma-separated). The comma is
+    // not a legal character inside an unquoted HTTP parameter value (RFC
+    // 2045 token grammar), and the backend's multipart parser (busboy)
+    // enforces that strictly: it fails to parse the header and silently
+    // falls back to a generic "text/plain" part type, which then fails
+    // upload validation on every chunk. The backend only needs to know this
+    // is WebM — the codec detail isn't used — so re-wrap with a bare
+    // "video/webm" type for transport instead of forwarding the raw blob
+    // type as-is. Bytes are unchanged, so the pre-computed checksum stays
+    // valid.
+    const uploadBlob = new Blob([chunk.blob], { type: 'video/webm' });
+
     const formData = new FormData();
     formData.append('sequenceNumber', String(chunk.sequenceNumber));
     formData.append('checksumSha256', checksum);
-    formData.append('chunk', chunk.blob, `chunk-${chunk.sequenceNumber}.webm`);
+    formData.append('chunk', uploadBlob, `chunk-${chunk.sequenceNumber}.webm`);
 
     const url = `${this.backendBaseUrl}/api/v1/sessions/${chunk.sessionId}/chunks`;
 

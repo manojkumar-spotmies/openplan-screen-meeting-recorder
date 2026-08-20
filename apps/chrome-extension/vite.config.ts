@@ -41,19 +41,19 @@ export default defineConfig({
         inspector: resolve(__dirname, 'src/inspector/index.html'),
         offscreen: resolve(__dirname, 'src/offscreen/offscreen.html'),
         background: resolve(__dirname, 'src/background/service-worker.ts'),
-        content: resolve(__dirname, 'src/content/meet-detector.ts'),
-        widget: resolve(__dirname, 'src/content/recording-widget.tsx'),
+        // meet-detector and recording-widget are intentionally NOT built here.
+        // Manifest V3 content_scripts entries have no "type": "module" support
+        // (unlike background.service_worker) — Chrome always injects them as
+        // classic scripts, so a chunk-splitting ES module bundle (the output
+        // this config produces for everything else) throws "Cannot use import
+        // statement outside a module" the moment Chrome runs it. They're built
+        // as self-contained IIFE bundles instead by build-content-scripts.mjs,
+        // run as a separate step after this build (see package.json).
       },
       output: {
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'background') {
             return 'src/background/service-worker.js';
-          }
-          if (chunkInfo.name === 'content') {
-            return 'src/content/meet-detector.js';
-          }
-          if (chunkInfo.name === 'widget') {
-            return 'src/content/recording-widget.js';
           }
           return 'assets/[name]-[hash].js';
         },

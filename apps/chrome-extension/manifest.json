@@ -28,8 +28,7 @@
       ],
       "js": [
         "src/content/meet-detector.ts"
-      ],
-      "type": "module"
+      ]
     },
     {
       "matches": [
@@ -37,8 +36,7 @@
       ],
       "js": [
         "src/content/recording-widget.tsx"
-      ],
-      "type": "module"
+      ]
     }
   ],
   "externally_connectable": {

@@ -155,6 +155,7 @@ async function handleStartRecording(
 
   try {
     const session = await recorderService.startRecording({
+      sessionId: payload.sessionId,
       title: payload.title || 'Local Meeting Recording',
       sourceTabUrl: payload.sourceTabUrl,
       displayStream,

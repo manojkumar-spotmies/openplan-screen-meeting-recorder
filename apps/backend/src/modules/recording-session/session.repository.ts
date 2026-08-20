@@ -1,46 +1,31 @@
-import { SessionStatus } from '@openplan/contracts';
+import type { RecordingSession } from '@prisma/client';
+import { prisma } from '../../core/db/prisma.js';
 
-export interface DbVideoSession {
-  id: string;
-  userId: string;
-  title: string;
-  sourceTabUrl: string | null;
-  status: SessionStatus;
-  totalChunksExpected: number | null;
-  totalChunksReceived: number;
-  gracePeriodEndsAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type DbVideoSession = RecordingSession;
 
 export class SessionRepository {
-  private sessions: Map<string, DbVideoSession> = new Map();
-
   public async findById(id: string): Promise<DbVideoSession | undefined> {
-    return this.sessions.get(id);
+    const session = await prisma.recordingSession.findUnique({ where: { id } });
+    return session ?? undefined;
   }
 
   public async save(session: DbVideoSession): Promise<DbVideoSession> {
-    this.sessions.set(session.id, { ...session });
-    return session;
+    return prisma.recordingSession.create({ data: session });
   }
 
   public async update(id: string, updates: Partial<DbVideoSession>): Promise<DbVideoSession> {
-    const existing = this.sessions.get(id);
-    if (!existing) {
+    try {
+      return await prisma.recordingSession.update({
+        where: { id },
+        data: updates,
+      });
+    } catch {
       throw new Error(`Session ${id} not found`);
     }
-    const updated: DbVideoSession = {
-      ...existing,
-      ...updates,
-      updatedAt: new Date(),
-    };
-    this.sessions.set(id, updated);
-    return updated;
   }
 
   public async clear(): Promise<void> {
-    this.sessions.clear();
+    await prisma.recordingSession.deleteMany({});
   }
 }
 

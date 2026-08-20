@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "composite": true,
-    "declaration": true
+    "declaration": true,
+    "outDir": "./dist"
   },
   "include": ["src/**/*"],
   "references": [

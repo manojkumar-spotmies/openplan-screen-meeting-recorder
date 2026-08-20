@@ -1,45 +1,32 @@
-export interface DbVideoChunk {
-  id: string;
-  sessionId: string;
-  sequenceNumber: number;
-  checksumSha256: string;
-  byteSize: number;
-  storageKey: string;
-  createdAt: Date;
-}
+import type { RecordingChunk } from '@prisma/client';
+import { prisma } from '../../core/db/prisma.js';
+
+export type DbVideoChunk = RecordingChunk;
 
 export class ChunkRepository {
-  private chunks: Map<string, DbVideoChunk> = new Map(); // Key: `${sessionId}:${sequenceNumber}`
-
-  private makeKey(sessionId: string, sequenceNumber: number): string {
-    return `${sessionId}:${sequenceNumber}`;
-  }
-
   public async findBySessionAndSequence(
     sessionId: string,
     sequenceNumber: number
   ): Promise<DbVideoChunk | undefined> {
-    return this.chunks.get(this.makeKey(sessionId, sequenceNumber));
+    const chunk = await prisma.recordingChunk.findUnique({
+      where: { sessionId_sequenceNumber: { sessionId, sequenceNumber } },
+    });
+    return chunk ?? undefined;
   }
 
   public async findBySessionId(sessionId: string): Promise<DbVideoChunk[]> {
-    const results: DbVideoChunk[] = [];
-    for (const chunk of this.chunks.values()) {
-      if (chunk.sessionId === sessionId) {
-        results.push(chunk);
-      }
-    }
-    return results.sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+    return prisma.recordingChunk.findMany({
+      where: { sessionId },
+      orderBy: { sequenceNumber: 'asc' },
+    });
   }
 
   public async save(chunk: DbVideoChunk): Promise<DbVideoChunk> {
-    const key = this.makeKey(chunk.sessionId, chunk.sequenceNumber);
-    this.chunks.set(key, { ...chunk });
-    return chunk;
+    return prisma.recordingChunk.create({ data: chunk });
   }
 
   public async clear(): Promise<void> {
-    this.chunks.clear();
+    await prisma.recordingChunk.deleteMany({});
   }
 }
 

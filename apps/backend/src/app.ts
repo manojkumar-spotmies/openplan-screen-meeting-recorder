@@ -10,6 +10,20 @@ export function createApp(): Express {
 
   app.use(cors());
   app.use(express.json());
+
+  // Minimal request logging — there was none before, which made silent failures (like a
+  // fetch() from the extension failing before ever reaching a route) invisible in the
+  // terminal. Skipped under tests to keep vitest output clean.
+  if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      const start = Date.now();
+      res.on('finish', () => {
+        console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`);
+      });
+      next();
+    });
+  }
+
   app.use(devAuthMiddleware);
 
   // Mount API V1 session routes

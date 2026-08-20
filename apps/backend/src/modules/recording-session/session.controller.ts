@@ -109,6 +109,43 @@ sessionRouter.post('/:sessionId/chunks', upload.single('chunk'), async (req: Aut
   }
 });
 
+// GET /api/v1/sessions/:sessionId — session + video status, for verification/polling.
+sessionRouter.get('/:sessionId', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.userId || 'dev-user-1';
+
+    const { session, video } = await sessionService.getSessionWithVideo(sessionId, userId);
+
+    return sendSuccess(res, {
+      sessionId: session.id,
+      title: session.title,
+      status: session.status,
+      totalChunksExpected: session.totalChunksExpected,
+      totalChunksReceived: session.totalChunksReceived,
+      startedAt: session.startedAt.toISOString(),
+      endedAt: session.endedAt ? session.endedAt.toISOString() : null,
+      video: video
+        ? {
+            status: video.status,
+            storageKey: video.storageKey,
+            fileName: video.fileName,
+            sizeBytes: video.sizeBytes,
+            durationMs: video.durationMs,
+            errorMessage: video.errorMessage,
+            processingAttempts: video.processingAttempts,
+            completedAt: video.completedAt ? video.completedAt.toISOString() : null,
+          }
+        : null,
+    });
+  } catch (err) {
+    if (err instanceof SessionServiceError) {
+      return sendError(res, err.code, err.message, err.statusCode);
+    }
+    return sendError(res, 'ERR_INTERNAL_SERVER_ERROR', err instanceof Error ? err.message : String(err), 500);
+  }
+});
+
 // POST /api/v1/sessions/:sessionId/stop
 sessionRouter.post('/:sessionId/stop', async (req: AuthenticatedRequest, res: Response) => {
   try {

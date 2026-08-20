@@ -24,6 +24,10 @@ build/
 out/
 target/
 
+# Local chunk/video storage (STORAGE_LOCAL_DIR) — binary recording data, never committed
+/sessions/
+storage_local/
+
 # Operating System Files
 .DS_Store
 .DS_Store?

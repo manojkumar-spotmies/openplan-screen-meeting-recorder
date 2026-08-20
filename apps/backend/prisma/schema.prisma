@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Matches the subset of SessionStatus actually reachable in session.service.ts today.
+// STOPPED and READY exist in @openplan/contracts' shared SessionStatus union for other
+// purposes (STOPPED is a real, reachable client-side/extension state; READY is reserved
+// here for once video processing exists) but STOPPED is never written by the backend.
+enum SessionStatus {
+  INITIALIZED
+  RECORDING
+  WAITING_FOR_CHUNKS
+  PROCESSING
+  READY
+  INCOMPLETE
+  FAILED
+}
+
+enum VideoStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum StorageProvider {
+  LOCAL
+  CLOUD
+}
+
+model RecordingSession {
+  id                  String        @id @default(uuid())
+  userId              String
+  title               String
+  sourceTabUrl        String?
+  status              SessionStatus @default(INITIALIZED)
+  totalChunksExpected Int?
+  totalChunksReceived Int           @default(0)
+  gracePeriodEndsAt   DateTime?
+  startedAt           DateTime      @default(now())
+  endedAt             DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  chunks RecordingChunk[]
+  video  Video?
+
+  @@index([userId])
+  @@index([status, gracePeriodEndsAt])
+  @@map("recording_sessions")
+}
+
+model RecordingChunk {
+  id             String   @id @default(uuid())
+  sessionId      String
+  sequenceNumber Int
+  checksumSha256 String
+  byteSize       Int
+  mimeType       String
+  storageKey     String
+  createdAt      DateTime @default(now())
+
+  session RecordingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sequenceNumber])
+  @@map("recording_chunks")
+}
+
+// sessionId is UNIQUE: the schema-level guarantee behind "one recording session = one video".
+// A second insert for the same session is rejected by Postgres itself, not just application logic.
+model Video {
+  id                 String          @id @default(uuid())
+  sessionId          String          @unique
+  userId             String
+  status             VideoStatus     @default(PENDING)
+  storageProvider    StorageProvider @default(LOCAL)
+  storageKey         String?
+  fileName           String?
+  mimeType           String?
+  sizeBytes          Int?
+  durationMs         Int?
+  processingAttempts Int             @default(0)
+  errorMessage       String?
+  createdAt          DateTime        @default(now())
+  completedAt        DateTime?
+
+  session RecordingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("videos")
+}

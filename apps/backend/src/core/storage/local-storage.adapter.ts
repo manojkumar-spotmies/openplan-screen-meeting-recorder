@@ -61,6 +61,36 @@ export class LocalStorageAdapter implements IStorageProvider {
     return fs.promises.readFile(fullPath);
   }
 
+  public getChunkPath(storageKey: string): string {
+    return path.join(this.baseDir, storageKey);
+  }
+
+  public async getProcessingScratchDir(sessionId: string): Promise<string> {
+    const scratchDir = path.join(this.baseDir, 'sessions', sessionId, 'processing');
+    await fs.promises.mkdir(scratchDir, { recursive: true });
+    return scratchDir;
+  }
+
+  public async saveFinalVideo(sessionId: string, sourceFilePath: string, fileName: string): Promise<string> {
+    const finalDir = path.join(this.baseDir, 'sessions', sessionId, 'final');
+    await fs.promises.mkdir(finalDir, { recursive: true });
+
+    const finalPath = path.join(finalDir, fileName);
+    // Atomic on the same filesystem — source lives under the same session directory.
+    await fs.promises.rename(sourceFilePath, finalPath);
+
+    return path.join('sessions', sessionId, 'final', fileName).replace(/\\/g, '/');
+  }
+
+  public getFinalVideoPath(storageKey: string): string {
+    return path.join(this.baseDir, storageKey);
+  }
+
+  public async finalVideoExists(sessionId: string): Promise<boolean> {
+    const finalPath = path.join(this.baseDir, 'sessions', sessionId, 'final', 'meeting.webm');
+    return fs.existsSync(finalPath);
+  }
+
   public async deleteSession(sessionId: string): Promise<void> {
     const sessionDir = path.join(this.baseDir, 'sessions', sessionId);
     if (fs.existsSync(sessionDir)) {
