@@ -24,6 +24,12 @@ export function createApp(): Express {
     });
   }
 
+  // Unauthenticated liveness check — mounted ahead of auth so it never depends on
+  // headers or DB state; used by Railway's healthcheck and for manual deploy verification.
+  app.get('/health', (_req: Request, res: Response) => {
+    res.status(200).json({ status: 'ok' });
+  });
+
   app.use(devAuthMiddleware);
 
   // Mount API V1 session routes
