@@ -24,6 +24,9 @@ build/
 out/
 target/
 
+# Packaged extension distributables
+*.zip
+
 # Local chunk/video storage (STORAGE_LOCAL_DIR) — binary recording data, never committed
 /sessions/
 storage_local/
