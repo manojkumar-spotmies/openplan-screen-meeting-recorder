@@ -31,14 +31,15 @@ chrome.runtime.onInstalled.addListener((details) => {
   logger.info('Openplan Recorder Extension installed');
   reconcileActiveState().catch((err) => logger.error('Error during initial state reconciliation:', err));
 
-  // First-run discoverability: nothing else ever points a new user at Storage Settings
-  // (it's only reachable via a button inside the popup), so without this there's no way
-  // to learn the local-folder feature exists before their first recording finishes with
-  // nowhere configured to save it. Only on a genuine fresh install — 'update' fires on
-  // every reload during development and would make this a constant, unwanted interruption.
+  // First-run discoverability: nothing else ever points a new user at the storage-folder
+  // picker (it lives inside the Local Inspector, reachable via a popup button), so without
+  // this there's no way to learn the local-folder feature exists before their first
+  // recording finishes with nowhere configured to save it. Only on a genuine fresh install —
+  // 'update' fires on every reload during development and would make this a constant,
+  // unwanted interruption.
   if (details.reason === 'install') {
-    chrome.tabs.create({ url: chrome.runtime.getURL('src/settings/index.html') }).catch((err) => {
-      logger.warn('Failed to open Storage Settings on first install:', err);
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/inspector/index.html') }).catch((err) => {
+      logger.warn('Failed to open Local Inspector on first install:', err);
     });
   }
 });
@@ -617,21 +618,17 @@ async function injectRecordingWidget(tabId: number): Promise<void> {
     }
 
     logger.info(`[ServiceWorker] Injecting recording widget into tab ${tabId} (${tab.url})`);
-    // recording-widget.js is an ES module (it has `import` statements pulling
-    // in shared bundle chunks). chrome.scripting.executeScript's `files`
-    // option always runs the file as a classic script, which throws
-    // "Cannot use import statement outside a module" for a module bundle.
-    // Injecting a small classic-script function that dynamically imports the
-    // module URL is the supported way to run module code this way; the
-    // target files are declared in web_accessible_resources so the page can
-    // fetch them.
+    // recording-widget.js is built (build-content-scripts.mjs) as a self-contained
+    // IIFE with every dependency inlined — no top-level import/export statements —
+    // specifically so it can run as a classic script. Injecting it directly via
+    // `files` lets chrome.scripting.executeScript's promise resolve only once the
+    // script has actually run in the page (including its synchronous mount call
+    // for an already-loaded tab), unlike a fire-and-forget dynamic import() inside
+    // a wrapper function, whose own success/failure was invisible to this call.
     await chrome.scripting.executeScript({
       target: { tabId },
       world: 'ISOLATED',
-      func: (widgetUrl: string) => {
-        import(widgetUrl);
-      },
-      args: [chrome.runtime.getURL(RECORDING_WIDGET_SCRIPT_PATH)],
+      files: [RECORDING_WIDGET_SCRIPT_PATH],
     });
     logger.info(`[ServiceWorker] Recording widget injection succeeded for tab ${tabId}`);
   } catch (err) {

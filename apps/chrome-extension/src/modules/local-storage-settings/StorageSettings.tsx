@@ -8,6 +8,7 @@ import {
   requestReauthorization,
   testWriteAccess,
 } from './folder-access.js';
+import { Badge, CheckIcon, WarnIcon, LinkButton } from '../mic-permission/MicPermissionSettings.js';
 
 type FolderState =
   | { kind: 'unsupported' }
@@ -119,126 +120,96 @@ export const StorageSettings: React.FC = () => {
   };
 
   return (
-    <div style={{ fontFamily: 'sans-serif', color: '#e2e8f0', maxWidth: '420px' }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#f8fafc' }}>Storage</h3>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', whiteSpace: 'nowrap', fontSize: '13px' }}>
+      <FolderIcon />
+      <span style={{ color: '#475569', fontWeight: 500 }}>Storage</span>
+      <span style={{ fontWeight: 600, color: '#0f172a' }}>Local</span>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }} />
-        <span style={{ fontSize: '13px', fontWeight: 600 }}>Local</span>
-      </div>
+      {state.kind === 'unsupported' && (
+        <Badge
+          tone="error"
+          icon={<WarnIcon />}
+          title="Your browser doesn't support choosing a local folder (File System Access API unavailable)."
+        >
+          Unsupported
+        </Badge>
+      )}
 
-      <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px' }}>
-        <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '6px' }}>Recording folder</div>
+      {(state.kind === 'loading' || state.kind === 'checking') && (
+        <span style={{ color: '#94a3b8' }}>{state.kind === 'checking' ? `/ ${state.name}` : 'Loading…'}</span>
+      )}
 
-        {state.kind === 'unsupported' && (
-          <FolderPanel message="Your browser doesn't support choosing a local folder (File System Access API unavailable)." tone="error" />
-        )}
+      {state.kind === 'empty' && (
+        <>
+          <Badge tone="neutral">Not set</Badge>
+          <LinkButton label="Choose folder" onClick={handleChooseFolder} disabled={busy} />
+        </>
+      )}
 
-        {(state.kind === 'loading' || state.kind === 'checking') && (
-          <FolderPanel message={state.kind === 'checking' ? state.name : 'Loading…'} tone="neutral" />
-        )}
+      {state.kind === 'needs-permission' && (
+        <>
+          <span style={{ color: '#94a3b8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px' }}>
+            / {state.name}
+          </span>
+          <Badge tone="warn" icon={<WarnIcon />} title="Permission needed to use this folder again.">
+            Needs permission
+          </Badge>
+          <LinkButton label="Grant permission" onClick={handleReauthorize} disabled={busy} />
+          <LinkButton label="Change folder" onClick={handleChooseFolder} disabled={busy} />
+        </>
+      )}
 
-        {state.kind === 'empty' && (
-          <>
-            <FolderPanel message="No folder selected" tone="neutral" />
-            <ActionButton label="Choose Folder" onClick={handleChooseFolder} disabled={busy} />
-          </>
-        )}
+      {state.kind === 'denied' && (
+        <>
+          <span style={{ color: '#94a3b8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px' }}>
+            / {state.name}
+          </span>
+          <Badge tone="error" icon={<WarnIcon />} title="Permission denied. Choose a folder again to continue.">
+            Denied
+          </Badge>
+          <LinkButton label="Change folder" onClick={handleChooseFolder} disabled={busy} />
+        </>
+      )}
 
-        {state.kind === 'needs-permission' && (
-          <>
-            <FolderPanel message={state.name} tone="neutral" />
-            <StatusLine tone="warn" text="Permission needed to use this folder again." />
-            <ActionButton label="Grant Permission" onClick={handleReauthorize} disabled={busy} />
-            <ActionButton label="Change Folder" onClick={handleChooseFolder} disabled={busy} secondary />
-          </>
-        )}
+      {state.kind === 'not-found' && (
+        <>
+          <span style={{ color: '#94a3b8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px' }}>
+            / {state.name}
+          </span>
+          <Badge tone="error" icon={<WarnIcon />} title="This folder no longer exists. Please choose another one.">
+            Missing
+          </Badge>
+          <LinkButton label="Choose folder" onClick={handleChooseFolder} disabled={busy} />
+        </>
+      )}
 
-        {state.kind === 'denied' && (
-          <>
-            <FolderPanel message={state.name} tone="neutral" />
-            <StatusLine tone="error" text="Permission denied. Choose a folder again to continue." />
-            <ActionButton label="Change Folder" onClick={handleChooseFolder} disabled={busy} />
-          </>
-        )}
+      {state.kind === 'write-failed' && (
+        <>
+          <span style={{ color: '#94a3b8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px' }}>
+            / {state.name}
+          </span>
+          <Badge tone="error" icon={<WarnIcon />} title={state.message}>
+            Write failed
+          </Badge>
+          <LinkButton label="Change folder" onClick={handleChooseFolder} disabled={busy} />
+        </>
+      )}
 
-        {state.kind === 'not-found' && (
-          <>
-            <FolderPanel message={state.name} tone="neutral" />
-            <StatusLine tone="error" text="This folder no longer exists. Please choose another one." />
-            <ActionButton label="Choose Folder" onClick={handleChooseFolder} disabled={busy} />
-          </>
-        )}
-
-        {state.kind === 'write-failed' && (
-          <>
-            <FolderPanel message={state.name} tone="neutral" />
-            <StatusLine tone="error" text={state.message} />
-            <ActionButton label="Change Folder" onClick={handleChooseFolder} disabled={busy} />
-          </>
-        )}
-
-        {state.kind === 'ready' && (
-          <>
-            <FolderPanel message={state.name} tone="neutral" />
-            <StatusLine tone="success" text="Folder ready" />
-            <ActionButton label="Change Folder" onClick={handleChooseFolder} disabled={busy} secondary />
-          </>
-        )}
-      </div>
+      {state.kind === 'ready' && (
+        <>
+          <span style={{ color: '#94a3b8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px' }}>
+            / {state.name}
+          </span>
+          <Badge tone="success" icon={<CheckIcon />} title="Folder ready" />
+          <LinkButton label="Change folder" onClick={handleChooseFolder} disabled={busy} />
+        </>
+      )}
     </div>
   );
 };
 
-const FolderPanel: React.FC<{ message: string; tone: 'neutral' | 'error' }> = ({ message, tone }) => (
-  <div
-    style={{
-      fontSize: '14px',
-      fontWeight: 600,
-      color: tone === 'error' ? '#f87171' : '#f1f5f9',
-      marginBottom: '10px',
-    }}
-  >
-    {message}
-  </div>
-);
-
-const StatusLine: React.FC<{ tone: 'success' | 'warn' | 'error'; text: string }> = ({ tone, text }) => {
-  const colors = {
-    success: { color: '#4ade80', icon: '✓' },
-    warn: { color: '#fde047', icon: '⚠️' },
-    error: { color: '#f87171', icon: '⚠️' },
-  } as const;
-  const { color, icon } = colors[tone];
-  return (
-    <div style={{ fontSize: '12px', color, marginBottom: '10px' }}>
-      {icon} {text}
-    </div>
-  );
-};
-
-const ActionButton: React.FC<{ label: string; onClick: () => void; disabled?: boolean; secondary?: boolean }> = ({
-  label,
-  onClick,
-  disabled,
-  secondary,
-}) => (
-  <button
-    onClick={onClick}
-    disabled={disabled}
-    style={{
-      padding: '8px 14px',
-      background: secondary ? 'transparent' : '#2563eb',
-      color: secondary ? '#94a3b8' : '#ffffff',
-      border: secondary ? '1px solid #475569' : 'none',
-      borderRadius: '6px',
-      fontSize: '12px',
-      fontWeight: 600,
-      cursor: disabled ? 'default' : 'pointer',
-      opacity: disabled ? 0.6 : 1,
-      marginRight: '8px',
-    }}
-  >
-    {label}
-  </button>
+const FolderIcon: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+  </svg>
 );

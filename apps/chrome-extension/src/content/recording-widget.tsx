@@ -72,13 +72,110 @@ function toWidgetState(session: LocalVideoSession): WidgetState {
   };
 }
 
+const WIDGET_SIZE = 40;
+const EDGE_MARGIN = 16;
+const DRAG_THRESHOLD = 4;
+
+interface DragState {
+  startX: number;
+  startY: number;
+  originX: number;
+  originY: number;
+  moved: boolean;
+}
+
 const RecordingWidget: React.FC = () => {
   const [state, setState] = useState<WidgetState | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  // Purely presentational drag-to-reposition state for the floating icon;
+  // does not affect recording/session state in any way.
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+
+  // Default to the original top-right placement, then keep it inside the
+  // viewport if the window is resized after a manual drag.
+  useEffect(() => {
+    const clampToViewport = (x: number, y: number) => {
+      const maxX = Math.max(0, window.innerWidth - WIDGET_SIZE);
+      const maxY = Math.max(0, window.innerHeight - WIDGET_SIZE);
+      return { x: Math.min(Math.max(x, 0), maxX), y: Math.min(Math.max(y, 0), maxY) };
+    };
+
+    setPosition((prev) =>
+      prev ?? clampToViewport(window.innerWidth - EDGE_MARGIN - WIDGET_SIZE, EDGE_MARGIN)
+    );
+
+    const handleResize = () => {
+      setPosition((prev) => (prev ? clampToViewport(prev.x, prev.y) : prev));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Suppresses the click-to-toggle when the pointerdown/up pair was actually
+  // a drag, without changing the click-based toggle path itself (a real
+  // `click` still follows `pointerup` in the browser, same as before dragging
+  // was added).
+  const suppressNextClickRef = useRef(false);
+
+  const handleIconPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (!position) return;
+      dragStateRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: position.x,
+        originY: position.y,
+        moved: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [position]
+  );
+
+  const handleIconPointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const dragState = dragStateRef.current;
+    if (!dragState) return;
+    const dx = event.clientX - dragState.startX;
+    const dy = event.clientY - dragState.startY;
+    if (!dragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    dragState.moved = true;
+    const maxX = Math.max(0, window.innerWidth - WIDGET_SIZE);
+    const maxY = Math.max(0, window.innerHeight - WIDGET_SIZE);
+    setPosition({
+      x: Math.min(Math.max(dragState.originX + dx, 0), maxX),
+      y: Math.min(Math.max(dragState.originY + dy, 0), maxY),
+    });
+  }, []);
+
+  const handleIconPointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const dragState = dragStateRef.current;
+    dragStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (dragState?.moved) {
+      logger.info('[RecordingWidget] icon repositioned');
+      suppressNextClickRef.current = true;
+    }
+  }, []);
+
+  const handleIconClick = useCallback(() => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+    logger.info('[RecordingWidget] icon clicked');
+    setExpanded((prevExpanded) => {
+      const next = !prevExpanded;
+      logger.info(`[RecordingWidget] expanded=${next}`);
+      return next;
+    });
+  }, []);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -160,7 +257,7 @@ const RecordingWidget: React.FC = () => {
     return () => document.removeEventListener('mousedown', handlePointerDown, true);
   }, [expanded]);
 
-  if (!state) return null;
+  if (!state || !position) return null;
 
   const runControlAction = async (
     action: ExtensionMessage['action'],
@@ -245,8 +342,13 @@ const RecordingWidget: React.FC = () => {
         // guarantees this widget is clickable regardless of what Meet's page does.
         all: 'initial',
         position: 'fixed',
-        top: '16px',
-        right: '16px',
+        top: `${position.y}px`,
+        left: `${position.x}px`,
+        // Locked to exactly the icon's own box so dragging (or the panel
+        // opening) never moves it — the panel/toast below are positioned
+        // absolutely relative to this box instead of sharing its layout.
+        width: `${WIDGET_SIZE}px`,
+        height: `${WIDGET_SIZE}px`,
         zIndex: 2147483647,
         isolation: 'isolate',
         pointerEvents: 'auto',
@@ -256,14 +358,13 @@ const RecordingWidget: React.FC = () => {
     >
       <button
         type="button"
-        onClick={() => {
-          logger.info('[RecordingWidget] icon clicked');
-          const next = !expanded;
-          logger.info(`[RecordingWidget] expanded=${next}`);
-          setExpanded(next);
-        }}
-        aria-label="Recording active, click for controls"
-        title="Recording active"
+        onClick={handleIconClick}
+        onPointerDown={handleIconPointerDown}
+        onPointerMove={handleIconPointerMove}
+        onPointerUp={handleIconPointerUp}
+        onPointerCancel={handleIconPointerUp}
+        aria-label={expanded ? 'Close recording controls' : 'Recording active, click for controls, or drag to move'}
+        title={expanded ? 'Close' : 'Recording active — drag to move'}
         style={{
           width: '40px',
           height: '40px',
@@ -274,77 +375,135 @@ const RecordingWidget: React.FC = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          cursor: 'pointer',
+          cursor: 'grab',
+          touchAction: 'none',
+          userSelect: 'none',
           pointerEvents: 'auto',
         }}
       >
-        <span
-          style={{
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            background: '#ef4444',
-            animation: 'openplan-rec-pulse 1.6s ease-in-out infinite',
-          }}
-        />
+        {expanded ? (
+          <span
+            style={{
+              position: 'relative',
+              width: '14px',
+              height: '14px',
+              display: 'block',
+            }}
+          >
+            <span
+              style={{
+                position: 'absolute',
+                top: '6px',
+                left: '0',
+                width: '14px',
+                height: '2px',
+                borderRadius: '1px',
+                background: '#e2e8f0',
+                transform: 'rotate(45deg)',
+              }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                top: '6px',
+                left: '0',
+                width: '14px',
+                height: '2px',
+                borderRadius: '1px',
+                background: '#e2e8f0',
+                transform: 'rotate(-45deg)',
+              }}
+            />
+          </span>
+        ) : (
+          <span
+            style={{
+              width: '12px',
+              height: '12px',
+              borderRadius: '50%',
+              background: '#ef4444',
+              animation: 'openplan-rec-pulse 1.6s ease-in-out infinite',
+            }}
+          />
+        )}
       </button>
 
-      {expanded && (
+      {(expanded || toast) && (
         <div
-          data-testid="openplan-recording-controls-panel"
           style={{
-            marginTop: '8px',
-            width: '210px',
-            background: '#1e293b',
-            border: '1px solid #334155',
-            borderRadius: '10px',
-            boxShadow: '0 4px 18px rgba(0,0,0,0.4)',
-            overflow: 'hidden',
-            color: '#e2e8f0',
-            fontSize: '13px',
-            pointerEvents: 'auto',
+            position: 'absolute',
+            // Anchor to whichever side of the icon has room (horizontally and
+            // vertically), so a dragged-near-an-edge icon doesn't pop its
+            // panel off-screen — the icon's own box above is unaffected.
+            ...(position.y + WIDGET_SIZE / 2 > window.innerHeight / 2
+              ? { bottom: '48px' }
+              : { top: '48px' }),
+            ...(position.x + WIDGET_SIZE / 2 > window.innerWidth / 2
+              ? { right: '0' }
+              : { left: '0' }),
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems:
+              position.x + WIDGET_SIZE / 2 > window.innerWidth / 2 ? 'flex-end' : 'flex-start',
           }}
         >
-          <ControlRow
-            label="Stop Recording"
-            icon="⏹"
-            onClick={handleStop}
-            disabled={pending}
-            danger
-          />
-          <ControlRow
-            label="Microphone"
-            icon={state.microphoneEnabled ? '🎙' : '🔇'}
-            stateLabel={state.hasMicrophone ? (state.microphoneEnabled ? 'On' : 'Off') : 'N/A'}
-            onClick={handleToggleMicrophone}
-            disabled={pending || !state.hasMicrophone}
-          />
-          <ControlRow
-            label="System Audio"
-            icon={state.systemAudioEnabled ? '🔊' : '🔇'}
-            stateLabel={state.hasSystemAudio ? (state.systemAudioEnabled ? 'On' : 'Off') : 'N/A'}
-            onClick={handleToggleSystemAudio}
-            disabled={pending || !state.hasSystemAudio}
-            last
-          />
-        </div>
-      )}
+          {expanded && (
+            <div
+              data-testid="openplan-recording-controls-panel"
+              style={{
+                width: '210px',
+                background: '#1e293b',
+                border: '1px solid #334155',
+                borderRadius: '10px',
+                boxShadow: '0 4px 18px rgba(0,0,0,0.4)',
+                overflow: 'hidden',
+                color: '#e2e8f0',
+                fontSize: '13px',
+                pointerEvents: 'auto',
+              }}
+            >
+              <ControlRow
+                label="Stop Recording"
+                icon="⏹"
+                onClick={handleStop}
+                disabled={pending}
+                danger
+              />
+              <ControlRow
+                label="Microphone"
+                icon={state.microphoneEnabled ? '🎙' : '🔇'}
+                stateLabel={state.hasMicrophone ? (state.microphoneEnabled ? 'On' : 'Off') : 'N/A'}
+                onClick={handleToggleMicrophone}
+                disabled={pending || !state.hasMicrophone}
+              />
+              <ControlRow
+                label="System Audio"
+                icon={state.systemAudioEnabled ? '🔊' : '🔇'}
+                stateLabel={state.hasSystemAudio ? (state.systemAudioEnabled ? 'On' : 'Off') : 'N/A'}
+                onClick={handleToggleSystemAudio}
+                disabled={pending || !state.hasSystemAudio}
+                last
+              />
+            </div>
+          )}
 
-      {toast && (
-        <div
-          style={{
-            marginTop: '8px',
-            padding: '8px 10px',
-            background: '#7f1d1d',
-            color: '#fecaca',
-            borderRadius: '6px',
-            fontSize: '12px',
-            maxWidth: '220px',
-            boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
-            pointerEvents: 'auto',
-          }}
-        >
-          {toast}
+          {toast && (
+            <div
+              style={{
+                marginTop: expanded ? '8px' : '0',
+                padding: '8px 10px',
+                background: '#7f1d1d',
+                color: '#fecaca',
+                borderRadius: '6px',
+                fontSize: '12px',
+                maxWidth: '220px',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+                pointerEvents: 'auto',
+              }}
+            >
+              {toast}
+            </div>
+          )}
         </div>
       )}
 
