@@ -6,6 +6,34 @@ import {
   getMissingSequences,
   deleteSession,
 } from '../modules/offline-cache/idb-store.js';
+import { exportFinalVideoToLocalFolder } from '../modules/local-export/export-final-video.js';
+import { getExportStatus, ExportStatusRecord } from '../modules/local-export/export-state-store.js';
+
+// Same defaults export-final-video.ts uses for the identical endpoint — kept local rather
+// than shared to match this codebase's existing pattern of per-module backend constants
+// (see sync-worker.ts, service-worker.ts, export-final-video.ts).
+const BACKEND_BASE_URL = 'http://localhost:4000';
+const DEFAULT_USER_ID = 'dev-user-1';
+
+/**
+ * Fetches the backend's already-verified final video (the same GET endpoint
+ * exportFinalVideoToLocalFolder uses) — the authoritative combined recording, and the
+ * only source left once sync-worker.ts has purged local chunk blobs after upload. Returns
+ * null (not a throw) for any non-success outcome — "not available yet" is an expected,
+ * common state (still processing, never synced, backend unreachable), not an error to surface.
+ */
+export async function fetchBackendVideoBlob(sessionId: string): Promise<Blob | null> {
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/api/v1/sessions/${sessionId}/video`, {
+      headers: { 'x-user-id': DEFAULT_USER_ID },
+    });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return blob.size > 0 ? blob : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Concatenates stored 5-second WebM chunks sorted by 1-indexed sequence number
@@ -29,9 +57,12 @@ export const LocalInspector: React.FC = () => {
   const [chunks, setChunks] = useState<LocalVideoChunk[]>([]);
   const [missingSequences, setMissingSequences] = useState<number[]>([]);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoSource, setVideoSource] = useState<'backend' | 'local-chunks' | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [micStatus, setMicStatus] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<ExportStatusRecord | undefined>(undefined);
+  const [exportBusy, setExportBusy] = useState<boolean>(false);
 
   const handleGrantMicPermission = async () => {
     try {
@@ -54,9 +85,11 @@ export const LocalInspector: React.FC = () => {
     } else {
       setChunks([]);
       setMissingSequences([]);
+      setExportStatus(undefined);
       if (videoUrl) {
         URL.revokeObjectURL(videoUrl);
         setVideoUrl(null);
+        setVideoSource(null);
       }
     }
   }, [selectedSessionId]);
@@ -80,6 +113,7 @@ export const LocalInspector: React.FC = () => {
     try {
       const sess = sessions.find((s) => s.sessionId === sessionId) || null;
       setSelectedSession(sess);
+      setExportStatus(await getExportStatus(sessionId));
 
       const fetchedChunks = await getChunksForSession(sessionId);
       setChunks(fetchedChunks);
@@ -87,17 +121,25 @@ export const LocalInspector: React.FC = () => {
       const missing = await getMissingSequences(sessionId);
       setMissingSequences(missing);
 
-      if (fetchedChunks.length > 0) {
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl);
+        setVideoUrl(null);
+        setVideoSource(null);
+      }
+
+      // Prefer the backend's verified final video — it's the authoritative combined
+      // recording and, for any session that's finished syncing, the ONLY place a playable
+      // copy still exists (see fetchBackendVideoBlob's doc comment). Local chunk blobs are
+      // the fallback for sessions that haven't synced yet.
+      const backendBlob = await fetchBackendVideoBlob(sessionId);
+      if (backendBlob) {
+        setVideoUrl(URL.createObjectURL(backendBlob));
+        setVideoSource('backend');
+      } else if (fetchedChunks.length > 0) {
         const unifiedBlob = concatenateChunksToBlob(fetchedChunks);
-        if (videoUrl) {
-          URL.revokeObjectURL(videoUrl);
-        }
-        const url = URL.createObjectURL(unifiedBlob);
-        setVideoUrl(url);
-      } else {
-        if (videoUrl) {
-          URL.revokeObjectURL(videoUrl);
-          setVideoUrl(null);
+        if (unifiedBlob.size > 0) {
+          setVideoUrl(URL.createObjectURL(unifiedBlob));
+          setVideoSource('local-chunks');
         }
       }
     } catch (err) {
@@ -119,6 +161,22 @@ export const LocalInspector: React.FC = () => {
     document.body.removeChild(a);
 
     setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+
+  const handleSaveToLocalFolder = async () => {
+    if (!selectedSessionId || !selectedSession || exportBusy) return;
+    setExportBusy(true);
+    try {
+      // exportFinalVideoToLocalFolder downloads the backend's already-verified final
+      // video (never re-runs recording/chunking/FFmpeg) and persists its own outcome —
+      // safe to call again as a retry after a previous failure.
+      await exportFinalVideoToLocalFolder(selectedSessionId, selectedSession.title, {
+        recordedAt: selectedSession.createdAt,
+      });
+      setExportStatus(await getExportStatus(selectedSessionId));
+    } finally {
+      setExportBusy(false);
+    }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -291,10 +349,45 @@ export const LocalInspector: React.FC = () => {
                   <div>Size: <strong>{formatBytes(selectedSession.fileSizeBytes)}</strong></div>
                 </div>
 
+                {/* Local folder export (Step 2B) — downloads the backend's already-verified
+                    final video and writes it to the user's selected folder; independent of
+                    recording/session status above, so a failed export never implies the
+                    recording itself failed. */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#0f172a', borderRadius: '8px', marginBottom: '20px', fontSize: '12px' }}>
+                  <span style={{ color: '#94a3b8' }}>Local folder export:</span>
+                  <span style={{ flex: 1, color: exportStatusColor(exportStatus?.state) }}>
+                    {describeExportStatus(exportStatus)}
+                  </span>
+                  <button
+                    onClick={handleSaveToLocalFolder}
+                    disabled={exportBusy}
+                    style={{
+                      padding: '6px 12px',
+                      background: 'transparent',
+                      color: '#94a3b8',
+                      border: '1px solid #475569',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: exportBusy ? 'default' : 'pointer',
+                      opacity: exportBusy ? 0.6 : 1,
+                    }}
+                  >
+                    {exportBusy
+                      ? 'Saving…'
+                      : exportStatus?.state === 'COMPLETED'
+                        ? 'Save Again'
+                        : exportStatus
+                          ? 'Retry Save'
+                          : 'Save to Local Folder'}
+                  </button>
+                </div>
+
                 {/* Unified Video Player Preview */}
                 {videoUrl ? (
                   <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#cbd5e1' }}>HTML5 Unified Player Preview</h4>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#cbd5e1' }}>
+                      {videoSource === 'backend' ? 'Final Video (from backend)' : 'Chunk Preview (local, not yet synced)'}
+                    </h4>
                     <video controls src={videoUrl} style={{ width: '100%', maxHeight: '450px', background: '#000000', borderRadius: '8px' }} />
                   </div>
                 ) : (
@@ -343,3 +436,32 @@ export const LocalInspector: React.FC = () => {
     </div>
   );
 };
+
+function describeExportStatus(status: ExportStatusRecord | undefined): string {
+  if (!status) return 'Not saved yet';
+  switch (status.state) {
+    case 'PENDING':
+    case 'EXPORTING':
+      return 'Saving…';
+    case 'COMPLETED':
+      return `✓ Saved as "${status.fileName}" in ${status.folderName}`;
+    case 'NO_FOLDER':
+      return 'No local folder configured — open Storage Settings';
+    case 'NEEDS_PERMISSION':
+      return `Permission needed for "${status.folderName}" — open Storage Settings`;
+    case 'PERMISSION_DENIED':
+      return `Permission denied for "${status.folderName}"`;
+    case 'FOLDER_UNAVAILABLE':
+      return `"${status.folderName}" is no longer available`;
+    case 'FAILED':
+      return status.errorMessage || 'Save failed';
+    default:
+      return 'Not saved yet';
+  }
+}
+
+function exportStatusColor(state: ExportStatusRecord['state'] | undefined): string {
+  if (state === 'COMPLETED') return '#4ade80';
+  if (state === 'PENDING' || state === 'EXPORTING' || state === undefined) return '#94a3b8';
+  return '#fde047';
+}

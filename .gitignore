@@ -45,3 +45,6 @@ Desktop.ini
 *.njsproj
 *.sln
 *.swp
+
+# TypeScript build cache
+*.tsbuildinfo

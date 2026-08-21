@@ -7,6 +7,7 @@ import { LocalStorageAdapter } from '../../core/storage/local-storage.adapter.js
 import { IStorageProvider } from '../../core/storage/storage.interface.js';
 import { env } from '../../core/config/env.schema.js';
 import { VideoProcessingService } from '../video-processing/video.service.js';
+import { VideoAssembler } from '../video-processing/video-assembler.js';
 import { videoRepository, DbVideo } from '../video-processing/video.repository.js';
 
 export class SessionServiceError extends Error {
@@ -22,11 +23,13 @@ export class SessionServiceError extends Error {
 
 export class SessionService {
   private storage: IStorageProvider;
+  private assembler: VideoAssembler;
   private videoProcessing: VideoProcessingService;
 
   constructor(storage?: IStorageProvider) {
     this.storage = storage || new LocalStorageAdapter();
-    this.videoProcessing = new VideoProcessingService(this.storage);
+    this.assembler = new VideoAssembler(this.storage);
+    this.videoProcessing = new VideoProcessingService(this.storage, this.assembler);
   }
 
   public async initSession(params: {
@@ -248,6 +251,18 @@ export class SessionService {
 
       await chunkRepository.save(dbChunk);
 
+      // Fold this chunk (and any now-contiguous successors) into assembled.webm. This is
+      // deferred bookkeeping like the DB writes around it: if it fails, the chunk stays
+      // safely on disk and folding is retried defensively at finalize time.
+      try {
+        await this.assembler.onChunkPersisted(sessionId, sequenceNumber);
+      } catch (err) {
+        console.warn(
+          `[SessionService] Chunk ${sessionId}:${sequenceNumber} persisted but incremental assembly failed (will retry at finalize):`,
+          err
+        );
+      }
+
       // Update session state
       const allChunks = await chunkRepository.findBySessionId(sessionId);
       const updates: Partial<DbVideoSession> = {
@@ -408,6 +423,63 @@ export class SessionService {
     }
     const video = await videoRepository.findBySessionId(sessionId);
     return { session, video };
+  }
+
+  /**
+   * Resolves the completed final video's location on disk for download, e.g. by the
+   * Chrome extension exporting it to a user-selected local folder (Step 2B). Reuses the
+   * same ownership/lookup logic as getSessionWithVideo — this is a read-only accessor,
+   * the backend's own final/meeting.webm is never modified or deleted by callers.
+   */
+  public async getFinalVideoFile(
+    sessionId: string,
+    userId: string
+  ): Promise<{ absolutePath: string; fileName: string; sizeBytes: number }> {
+    const { video } = await this.getSessionWithVideo(sessionId, userId);
+
+    if (!video || video.status !== 'COMPLETED' || !video.storageKey) {
+      throw new SessionServiceError(
+        'ERR_VIDEO_NOT_READY',
+        `Final video for session ${sessionId} is not ready yet`,
+        409
+      );
+    }
+
+    return {
+      absolutePath: this.storage.getFinalVideoPath(video.storageKey),
+      fileName: video.fileName || 'meeting.webm',
+      sizeBytes: video.sizeBytes || 0,
+    };
+  }
+
+  /**
+   * Removes the backend's disposable working files for a session (folded assembly
+   * buffer, FFmpeg scratch dir, any stray chunk files) once the extension has confirmed
+   * the final video was saved to the user's local folder. Never touches the session or
+   * video DB rows, and never touches the final video itself — only the temporary files
+   * that produced it. Requires the video to be COMPLETED so a caller can never trigger
+   * cleanup for a session whose export hasn't actually succeeded (if local export
+   * fails, callers must not call this — nothing here should run). Idempotent: safe to
+   * call more than once for the same session, since removing an already-removed
+   * directory is a no-op.
+   */
+  public async cleanupLocalRecordingArtifacts(
+    sessionId: string,
+    userId: string
+  ): Promise<{ sessionId: string; cleaned: boolean }> {
+    const { video } = await this.getSessionWithVideo(sessionId, userId);
+
+    if (!video || video.status !== 'COMPLETED') {
+      throw new SessionServiceError(
+        'ERR_VIDEO_NOT_READY',
+        `Cannot clean up session ${sessionId}: final video is not COMPLETED yet`,
+        409
+      );
+    }
+
+    await this.storage.cleanupTemporaryArtifacts(sessionId);
+
+    return { sessionId, cleaned: true };
   }
 
   private getMissingSequenceNumbers(existingChunks: DbVideoChunk[], totalExpected: number): number[] {

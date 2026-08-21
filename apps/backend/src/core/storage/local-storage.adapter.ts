@@ -65,6 +65,31 @@ export class LocalStorageAdapter implements IStorageProvider {
     return path.join(this.baseDir, storageKey);
   }
 
+  public getChunkStorageKey(sessionId: string, sequenceNumber: number): string {
+    const zeroPaddedSeq = String(sequenceNumber).padStart(6, '0');
+    return path.join('sessions', sessionId, `chunk-${zeroPaddedSeq}.webm`).replace(/\\/g, '/');
+  }
+
+  public async chunkExists(storageKey: string): Promise<boolean> {
+    return fs.existsSync(this.getChunkPath(storageKey));
+  }
+
+  public async deleteChunk(storageKey: string): Promise<void> {
+    try {
+      await fs.promises.unlink(this.getChunkPath(storageKey));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw err;
+      }
+    }
+  }
+
+  public async getAssemblyDir(sessionId: string): Promise<string> {
+    const assemblyDir = path.join(this.baseDir, 'sessions', sessionId, 'assembled');
+    await fs.promises.mkdir(assemblyDir, { recursive: true });
+    return assemblyDir;
+  }
+
   public async getProcessingScratchDir(sessionId: string): Promise<string> {
     const scratchDir = path.join(this.baseDir, 'sessions', sessionId, 'processing');
     await fs.promises.mkdir(scratchDir, { recursive: true });
@@ -96,5 +121,19 @@ export class LocalStorageAdapter implements IStorageProvider {
     if (fs.existsSync(sessionDir)) {
       await fs.promises.rm(sessionDir, { recursive: true, force: true });
     }
+  }
+
+  public async cleanupTemporaryArtifacts(sessionId: string): Promise<void> {
+    const sessionDir = path.join(this.baseDir, 'sessions', sessionId);
+    if (!fs.existsSync(sessionDir)) {
+      return;
+    }
+
+    const entries = await fs.promises.readdir(sessionDir, { withFileTypes: true });
+    await Promise.all(
+      entries
+        .filter((entry) => entry.name !== 'final')
+        .map((entry) => fs.promises.rm(path.join(sessionDir, entry.name), { recursive: true, force: true }))
+    );
   }
 }

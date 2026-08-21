@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { AuthenticatedRequest } from '../../core/middleware/auth.middleware.js';
@@ -138,6 +139,58 @@ sessionRouter.get('/:sessionId', async (req: AuthenticatedRequest, res: Response
           }
         : null,
     });
+  } catch (err) {
+    if (err instanceof SessionServiceError) {
+      return sendError(res, err.code, err.message, err.statusCode);
+    }
+    return sendError(res, 'ERR_INTERNAL_SERVER_ERROR', err instanceof Error ? err.message : String(err), 500);
+  }
+});
+
+// GET /api/v1/sessions/:sessionId/video — streams the completed final video's raw bytes,
+// for the extension to export to a user-selected local folder (Step 2B). Read-only: never
+// touches the backend's own copy of the file.
+sessionRouter.get('/:sessionId/video', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.userId || 'dev-user-1';
+
+    const { absolutePath, fileName, sizeBytes } = await sessionService.getFinalVideoFile(sessionId, userId);
+
+    if (!fs.existsSync(absolutePath)) {
+      return sendError(res, 'ERR_VIDEO_FILE_MISSING', 'Final video file is missing from storage', 404);
+    }
+
+    const contentLength = sizeBytes || fs.statSync(absolutePath).size;
+    res.setHeader('Content-Type', 'video/webm');
+    res.setHeader('Content-Length', String(contentLength));
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace(/"/g, '')}"`);
+
+    const stream = fs.createReadStream(absolutePath);
+    stream.on('error', (err) => {
+      res.destroy(err);
+    });
+    stream.pipe(res);
+  } catch (err) {
+    if (err instanceof SessionServiceError) {
+      return sendError(res, err.code, err.message, err.statusCode);
+    }
+    return sendError(res, 'ERR_INTERNAL_SERVER_ERROR', err instanceof Error ? err.message : String(err), 500);
+  }
+});
+
+// POST /api/v1/sessions/:sessionId/cleanup-local — removes the backend's disposable
+// working files (assembly buffer, FFmpeg scratch dir) for a session once the extension
+// has confirmed the final video was saved to the user's local folder. Never touches
+// session/video DB rows or the final video itself. Safe to call more than once.
+sessionRouter.post('/:sessionId/cleanup-local', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.userId || 'dev-user-1';
+
+    const result = await sessionService.cleanupLocalRecordingArtifacts(sessionId, userId);
+
+    return sendSuccess(res, result, 200);
   } catch (err) {
     if (err instanceof SessionServiceError) {
       return sendError(res, err.code, err.message, err.statusCode);

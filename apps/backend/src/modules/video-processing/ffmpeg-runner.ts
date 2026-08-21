@@ -46,32 +46,11 @@ async function concatenateRaw(chunkPaths: string[], outPath: string): Promise<vo
   }
 }
 
-/**
- * Combines this session's sequential WebM chunks into one playable file.
- *
- * STRATEGY (pending confirmation against real F-001 chunks — see the architecture
- * review's FFmpeg spike): Chrome's MediaRecorder, run with a fixed timeslice, emits
- * `ondataavailable` blobs that are fragments of ONE continuous muxed WebM stream, not
- * independent files — only the first fragment carries the EBML/Segment header. This is
- * corroborated by the existing `LocalInspector.tsx` preview, which already reconstructs
- * a playable video by raw-concatenating chunk blobs. On that basis, the strategy here is
- * raw byte concatenation followed by one `ffmpeg -c copy` remux pass to repair
- * container-level metadata a piecewise-recorded stream typically lacks (Cues/SeekHead
- * index, resolved Duration). If the real-chunk spike disproves this, swap the body of
- * this function for the concat-demuxer approach instead — callers are unaffected either
- * way since the public contract is just "chunk paths in order -> one verified file".
- */
-export async function combineChunks(chunkPaths: string[], scratchDir: string): Promise<FfmpegRunResult> {
-  if (chunkPaths.length === 0) {
-    throw new Error('combineChunks called with zero chunk paths');
-  }
-
-  const rawPath = path.join(scratchDir, 'raw.webm');
+/** Runs `ffmpeg -c copy` on `inputPath` into `scratchDir/output.webm`, then verifies the result with ffprobe. */
+async function remuxAndValidate(inputPath: string, scratchDir: string): Promise<FfmpegRunResult> {
   const outputPath = path.join(scratchDir, 'output.webm');
 
-  await concatenateRaw(chunkPaths, rawPath);
-
-  await runProcess('ffmpeg', ['-y', '-i', rawPath, '-c', 'copy', outputPath]);
+  await runProcess('ffmpeg', ['-y', '-i', inputPath, '-c', 'copy', outputPath]);
 
   const probeOutput = await runProcess('ffprobe', [
     '-v',
@@ -92,19 +71,63 @@ export async function combineChunks(chunkPaths: string[], scratchDir: string): P
   }
 
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    throw new Error(`ffprobe reported an invalid duration (${durationSeconds}) for the combined output`);
+    throw new Error(`ffprobe reported an invalid duration (${durationSeconds}) for the output`);
   }
 
   const stats = await fs.promises.stat(outputPath);
   if (stats.size === 0) {
-    throw new Error('Combined output file is empty');
+    throw new Error('Remuxed output file is empty');
   }
-
-  await fs.promises.rm(rawPath, { force: true });
 
   return {
     outputPath,
     durationMs: Math.round(durationSeconds * 1000),
     sizeBytes: stats.size,
   };
+}
+
+/**
+ * Combines this session's sequential WebM chunks into one playable file.
+ *
+ * STRATEGY (confirmed against real F-001 chunks — see the architecture review's FFmpeg
+ * spike): Chrome's MediaRecorder, run with a fixed timeslice, emits `ondataavailable`
+ * blobs that are fragments of ONE continuous muxed WebM stream, not independent files —
+ * only the first fragment carries the EBML/Segment header. Verified directly against a
+ * real 7-chunk, 34.47s recording: chunks 2-7 each fail `ffprobe`/`ffmpeg` on their own
+ * ("EBML header parsing failed" — proof they are headerless continuations, not standalone
+ * files, so the concat demuxer would not have worked here), while raw concatenation +
+ * one `ffmpeg -c copy` remux pass produced a file that decodes cleanly start-to-end
+ * (`ffmpeg -f null -`, exit 0) with `probe_score=100` and correct duration. The remux
+ * pass repairs container-level metadata a piecewise-recorded stream lacks (Cues/SeekHead
+ * index, resolved Duration) — byte-for-byte the output is the concatenated stream data
+ * plus ~450 bytes of added index/duration metadata, confirming `-c copy` never re-encodes.
+ */
+export async function combineChunks(chunkPaths: string[], scratchDir: string): Promise<FfmpegRunResult> {
+  if (chunkPaths.length === 0) {
+    throw new Error('combineChunks called with zero chunk paths');
+  }
+
+  const rawPath = path.join(scratchDir, 'raw.webm');
+  await concatenateRaw(chunkPaths, rawPath);
+
+  const result = await remuxAndValidate(rawPath, scratchDir);
+
+  await fs.promises.rm(rawPath, { force: true });
+
+  return result;
+}
+
+/**
+ * Finalizes an already-incrementally-assembled WebM (see VideoAssembler) with a single
+ * `ffmpeg -c copy` remux pass — no re-concatenation, no re-encoding. Used by the
+ * incremental assembly pipeline instead of `combineChunks`, since the chunk bytes are
+ * already joined in `assembledPath`.
+ */
+export async function finalizeAssembled(assembledPath: string, scratchDir: string): Promise<FfmpegRunResult> {
+  const stats = await fs.promises.stat(assembledPath).catch(() => null);
+  if (!stats || stats.size === 0) {
+    throw new Error(`finalizeAssembled called with missing/empty assembled file: ${assembledPath}`);
+  }
+
+  return remuxAndValidate(assembledPath, scratchDir);
 }

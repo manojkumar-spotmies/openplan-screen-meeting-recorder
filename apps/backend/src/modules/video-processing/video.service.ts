@@ -1,13 +1,21 @@
 import path from 'path';
 import { chunkRepository } from '../recording-session/chunk.repository.js';
 import { videoRepository, DbVideo } from './video.repository.js';
-import { combineChunks } from './ffmpeg-runner.js';
+import { finalizeAssembled } from './ffmpeg-runner.js';
+import { VideoAssembler } from './video-assembler.js';
 import { IStorageProvider } from '../../core/storage/storage.interface.js';
 
 const FINAL_VIDEO_FILENAME = 'meeting.webm';
 
 export class VideoProcessingService {
-  constructor(private storage: IStorageProvider) {}
+  private assembler: VideoAssembler;
+
+  constructor(
+    private storage: IStorageProvider,
+    assembler?: VideoAssembler
+  ) {
+    this.assembler = assembler || new VideoAssembler(storage);
+  }
 
   /**
    * Turns a session's complete, verified chunk set into one final video. Safe to call
@@ -46,10 +54,14 @@ export class VideoProcessingService {
         throw new Error('No chunks found for session; cannot produce a video');
       }
 
-      const chunkPaths = chunks.map((c) => this.storage.getChunkPath(c.storageKey));
+      // Chunks were already folded into assembled.webm incrementally as they arrived
+      // (see VideoAssembler); this call is a defensive catch-up for anything that
+      // wasn't folded yet (e.g. a DB outage deferred it) and verifies completeness.
+      // Finalization here is a single stream-copy remux, not a re-concatenation.
+      const assembledPath = await this.assembler.ensureFullyAssembled(sessionId, chunks.length);
       const scratchDir = await this.storage.getProcessingScratchDir(sessionId);
 
-      const result = await combineChunks(chunkPaths, scratchDir);
+      const result = await finalizeAssembled(assembledPath, scratchDir);
 
       const finalStorageKey = await this.storage.saveFinalVideo(
         sessionId,

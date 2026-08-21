@@ -3,6 +3,7 @@ import {
   ExternalStartRecordingMessage,
   StartRecordingPayload,
   StopRecordingPayload,
+  StopRecordingResponseData,
   SetMicrophoneEnabledPayload,
   SetSystemAudioEnabledPayload,
   RecordingControlResponseData,
@@ -15,6 +16,8 @@ import {
 import { logger } from '@openplan/core';
 import { getAllSessions, getSession, getChunksForSession } from '../modules/offline-cache/idb-store.js';
 import { syncWorker } from '../modules/offline-cache/sync-worker.js';
+import { exportFinalVideoToLocalFolder } from '../modules/local-export/export-final-video.js';
+import { notifyExportOutcomeIfNeeded } from '../modules/local-export/export-notifications.js';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 
@@ -23,9 +26,20 @@ let recordedTabId: number | null = null;
 let recordedTabIsMeet: boolean = false;
 
 // Service Worker Initialization & State Reconciliation (E-09)
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   logger.info('Openplan Recorder Extension installed');
   reconcileActiveState().catch((err) => logger.error('Error during initial state reconciliation:', err));
+
+  // First-run discoverability: nothing else ever points a new user at Storage Settings
+  // (it's only reachable via a button inside the popup), so without this there's no way
+  // to learn the local-folder feature exists before their first recording finishes with
+  // nowhere configured to save it. Only on a genuine fresh install — 'update' fires on
+  // every reload during development and would make this a constant, unwanted interruption.
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/settings/index.html') }).catch((err) => {
+      logger.warn('Failed to open Storage Settings on first install:', err);
+    });
+  }
 });
 
 chrome.runtime.onStartup?.addListener(() => {
@@ -396,7 +410,7 @@ async function executeStopRecording(
   };
 
   const response = (await chrome.runtime.sendMessage(offscreenStopMessage)) as
-    | ApiResponse<{ sessionId: string; status: string; totalChunks: number; durationSeconds: number }>
+    | ApiResponse<StopRecordingResponseData>
     | ApiErrorResponse;
 
   if (response.success) {
@@ -420,7 +434,7 @@ async function executeStopRecording(
         }
       });
 
-      await fetch(`http://localhost:4000/api/v1/sessions/${targetSessionId}/stop`, {
+      const stopResponse = await fetch(`http://localhost:4000/api/v1/sessions/${targetSessionId}/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': 'dev-user-1' },
         body: JSON.stringify({
@@ -429,6 +443,33 @@ async function executeStopRecording(
           finalChunkTimestamp: new Date().toISOString(),
         }),
       });
+
+      // The backend's /stop call already synchronously runs finalization (VideoAssembler
+      // fold + FFmpeg remux) to completion before responding when every chunk is present —
+      // see session.service.ts stopSession(). A `status: 'READY'` here means the final
+      // video is already verified and sitting in backend storage, so this is the correct,
+      // single point to attempt the local export — never before this signal.
+      //
+      // Known gap: if chunks were still missing at stop time (WAITING_FOR_CHUNKS), a late
+      // chunk finishing the recording later does not re-trigger this automatic export —
+      // the user can still trigger it manually from the Local Inspector.
+      if (stopResponse.ok && response.success) {
+        const stopJson = await stopResponse.json().catch(() => null);
+        if (stopJson?.data?.status === 'READY') {
+          const sessionRecord = await getSession(targetSessionId);
+          const title = sessionRecord?.title || 'Recording';
+          const exportOutcome = await exportFinalVideoToLocalFolder(targetSessionId, title, {
+            recordedAt: sessionRecord?.createdAt,
+          });
+          notifyExportOutcomeIfNeeded(exportOutcome);
+          response.data.localExport = {
+            state: exportOutcome.state,
+            folderName: exportOutcome.folderName,
+            fileName: exportOutcome.fileName,
+            errorMessage: exportOutcome.errorMessage,
+          };
+        }
+      }
     } catch (err) {
       logger.warn('Failed backend /stop handshake (session preserved in IndexedDB):', err);
     }

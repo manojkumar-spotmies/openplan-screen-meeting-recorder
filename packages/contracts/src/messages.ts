@@ -59,6 +59,26 @@ export interface StopRecordingResponseData {
   status: SessionStatus;
   totalChunks: number;
   durationSeconds: number;
+  localExport?: LocalExportSummary;
+}
+
+// Outcome of exporting the backend's completed final video to the user's selected local
+// folder (Step 2B). Deliberately separate from SessionStatus/recording lifecycle — a
+// failed local export never affects whether the recording itself succeeded.
+export type LocalExportState =
+  | 'NOT_ATTEMPTED'
+  | 'NO_FOLDER'
+  | 'NEEDS_PERMISSION'
+  | 'PERMISSION_DENIED'
+  | 'FOLDER_UNAVAILABLE'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export interface LocalExportSummary {
+  state: LocalExportState;
+  folderName?: string;
+  fileName?: string;
+  errorMessage?: string;
 }
 
 export interface PauseRecordingPayload {

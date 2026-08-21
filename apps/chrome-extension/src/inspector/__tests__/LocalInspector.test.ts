@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
-import { concatenateChunksToBlob } from '../LocalInspector.js';
+import { concatenateChunksToBlob, fetchBackendVideoBlob } from '../LocalInspector.js';
 import { LocalVideoChunk } from '@openplan/contracts';
 import {
   createSession,
@@ -95,5 +95,61 @@ describe('LocalInspector (LocalInspector.tsx)', () => {
 
     const missing = await getMissingSequences(sessionId);
     expect(missing).toEqual([3]);
+  });
+
+  describe('fetchBackendVideoBlob (backend final-video preview, fixes purged-chunk playback)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('returns the backend video blob when the final video is available (HTTP 200)', async () => {
+      const videoBytes = new Uint8Array([1, 2, 3, 4]);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: true,
+          blob: async () => new Blob([videoBytes], { type: 'video/webm' }),
+        }))
+      );
+
+      const result = await fetchBackendVideoBlob('some-session-id');
+      expect(result).not.toBeNull();
+      expect(result!.size).toBe(4);
+    });
+
+    it('returns null (not a throw) when the backend has no video yet (e.g. 404/409)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({ ok: false }))
+      );
+
+      const result = await fetchBackendVideoBlob('some-session-id');
+      expect(result).toBeNull();
+    });
+
+    it('returns null (not a throw) when the backend is unreachable', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new Error('network error');
+        })
+      );
+
+      const result = await fetchBackendVideoBlob('some-session-id');
+      expect(result).toBeNull();
+    });
+
+    it('treats an empty response body as unavailable rather than a playable-but-empty video', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: true,
+          blob: async () => new Blob([], { type: 'video/webm' }),
+        }))
+      );
+
+      const result = await fetchBackendVideoBlob('some-session-id');
+      expect(result).toBeNull();
+    });
   });
 });

@@ -3,14 +3,18 @@ import {
   ExtensionMessage,
   StartRecordingPayload,
   StopRecordingPayload,
+  StopRecordingResponseData,
   RecordingStateChangedPayload,
   RecordingControlResponseData,
   SessionStatus,
   CaptureMode,
   LocalVideoSession,
+  LocalExportSummary,
   ApiResponse,
   ApiErrorResponse,
 } from '@openplan/contracts';
+import { getStoredDirectoryHandle } from '../modules/local-storage-settings/directory-handle-store.js';
+import { checkStoredPermission, isFileSystemAccessSupported } from '../modules/local-storage-settings/folder-access.js';
 
 function sendServiceWorkerMessage<T>(
   action: ExtensionMessage['action'],
@@ -61,6 +65,17 @@ export const PopupApp: React.FC = () => {
   // restarting from zero (the session's own `durationSeconds` field is only
   // ever written once, at stop time).
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  const [localExport, setLocalExport] = useState<LocalExportSummary | null>(null);
+  // Non-prompting check only — chrome.notifications and Settings' own "Grant Permission"
+  // button are the only places that actually re-request permission (requestPermission()
+  // needs a live user gesture, and popups are too unstable to trigger a browser dialog
+  // reliably: they can lose focus and get torn down by Chrome the instant one tries to
+  // render, killing the request silently mid-await). This just warns before you start
+  // recording instead of finding out afterward, and points at the one place that works.
+  const [folderPermissionWarning, setFolderPermissionWarning] = useState<{
+    name: string;
+    state: 'needs-permission' | 'denied';
+  } | null>(null);
 
   // Poll/Fetch session status on popup open
   useEffect(() => {
@@ -93,6 +108,30 @@ export const PopupApp: React.FC = () => {
         chrome.runtime.onMessage.removeListener(messageListener);
       }
     };
+  }, []);
+
+  // Warn before recording starts, rather than the user only finding out afterward via
+  // Settings. Read-only — never calls requestPermission() (see the state's own comment).
+  useEffect(() => {
+    if (!isFileSystemAccessSupported()) return;
+
+    (async () => {
+      try {
+        const folderHandle = await getStoredDirectoryHandle();
+        if (!folderHandle) {
+          setFolderPermissionWarning(null);
+          return;
+        }
+        const permission = await checkStoredPermission(folderHandle);
+        if (permission === 'needs-permission' || permission === 'denied') {
+          setFolderPermissionWarning({ name: folderHandle.name, state: permission });
+        } else {
+          setFolderPermissionWarning(null);
+        }
+      } catch (err) {
+        console.warn('Failed to check local folder permission:', err);
+      }
+    })();
   }, []);
 
   // Duration timer during RECORDING state. Recomputed from sessionStartedAt on
@@ -152,6 +191,7 @@ export const PopupApp: React.FC = () => {
   const handleStartRecording = async () => {
     setInfoMessage(null);
     setErrorMessage(null);
+    setLocalExport(null);
     setStatus('REQUESTING_PERMISSIONS');
 
     // Request microphone permission from visible extension Popup UI context
@@ -224,12 +264,13 @@ export const PopupApp: React.FC = () => {
 
     chrome.runtime.sendMessage(
       message,
-      (response: ApiResponse<{ sessionId: string; status: SessionStatus; totalChunks: number; durationSeconds: number }> | ApiErrorResponse) => {
+      (response: ApiResponse<StopRecordingResponseData> | ApiErrorResponse) => {
         if (response && response.success) {
           setStatus('STOPPED');
           setTotalChunks(response.data.totalChunks);
           setDurationSeconds(Math.round(response.data.durationSeconds));
           setSessionStartedAt(null);
+          setLocalExport(response.data.localExport || null);
         } else {
           setStatus('ERROR');
           setErrorMessage(response?.error?.message || 'Failed to stop recording cleanly');
@@ -284,6 +325,12 @@ export const PopupApp: React.FC = () => {
     }
   };
 
+  const openSettings = () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+      chrome.tabs.create({ url: chrome.runtime.getURL('src/settings/index.html') });
+    }
+  };
+
   const formatTime = (totalSecs: number) => {
     const mins = Math.floor(totalSecs / 60);
     const secs = totalSecs % 60;
@@ -322,6 +369,42 @@ export const PopupApp: React.FC = () => {
 
       {status === 'IDLE' && (
         <div>
+          {folderPermissionWarning && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: '#eab30820',
+                border: '1px solid #eab308',
+                color: '#fde047',
+                borderRadius: '6px',
+                fontSize: '12px',
+                marginBottom: '12px',
+              }}
+            >
+              <div style={{ marginBottom: '6px' }}>
+                ⚠ Local folder &quot;{folderPermissionWarning.name}&quot;{' '}
+                {folderPermissionWarning.state === 'denied'
+                  ? 'access was denied'
+                  : 'needs permission'}{' '}
+                — recordings won&apos;t be saved there until you fix this in Settings.
+              </div>
+              <button
+                onClick={openSettings}
+                style={{
+                  padding: '5px 10px',
+                  background: '#eab308',
+                  color: '#1e293b',
+                  border: 'none',
+                  borderRadius: '5px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Open Storage Settings
+              </button>
+            </div>
+          )}
           <p style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '16px' }}>
             Local-first screen, system audio, and microphone recorder.
           </p>
@@ -352,9 +435,25 @@ export const PopupApp: React.FC = () => {
               borderRadius: '6px',
               fontSize: '12px',
               cursor: 'pointer',
+              marginBottom: '8px',
             }}
           >
             Open Local Inspector
+          </button>
+          <button
+            onClick={openSettings}
+            style={{
+              width: '100%',
+              padding: '8px 16px',
+              background: 'transparent',
+              color: '#94a3b8',
+              border: '1px solid #475569',
+              borderRadius: '6px',
+              fontSize: '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Storage Settings
           </button>
         </div>
       )}
@@ -460,6 +559,8 @@ export const PopupApp: React.FC = () => {
             </p>
           </div>
 
+          {renderLocalExportStatus(localExport)}
+
           <button
             onClick={openInspector}
             style={{
@@ -517,3 +618,61 @@ export const PopupApp: React.FC = () => {
     </div>
   );
 };
+
+// Reports what happened when the just-completed recording's final video was exported to
+// the user's selected local folder (Step 2B) — separate from recording/session status, so
+// a failed export never implies the recording itself failed. Renders nothing while no
+// export was attempted at all (e.g. the backend hadn't finished finalizing by /stop time).
+function renderLocalExportStatus(localExport: LocalExportSummary | null): React.ReactNode {
+  if (!localExport || localExport.state === 'NOT_ATTEMPTED') {
+    return null;
+  }
+
+  const boxStyle: React.CSSProperties = {
+    padding: '8px 12px',
+    borderRadius: '6px',
+    fontSize: '12px',
+    marginBottom: '12px',
+  };
+
+  switch (localExport.state) {
+    case 'COMPLETED':
+      return (
+        <div style={{ ...boxStyle, background: '#16a34a20', border: '1px solid #16a34a', color: '#4ade80' }}>
+          ✓ Saved to: {localExport.folderName}
+          {localExport.fileName ? <div style={{ marginTop: '2px', color: '#bbf7d0' }}>File: {localExport.fileName}</div> : null}
+        </div>
+      );
+    case 'NO_FOLDER':
+      return (
+        <div style={{ ...boxStyle, background: '#eab30820', border: '1px solid #eab308', color: '#fde047' }}>
+          ⚠ Local folder not configured
+        </div>
+      );
+    case 'NEEDS_PERMISSION':
+      return (
+        <div style={{ ...boxStyle, background: '#eab30820', border: '1px solid #eab308', color: '#fde047' }}>
+          ⚠ Local folder permission required. Open Storage Settings to grant it.
+        </div>
+      );
+    case 'PERMISSION_DENIED':
+      return (
+        <div style={{ ...boxStyle, background: '#ef444420', border: '1px solid #ef4444', color: '#f87171' }}>
+          ⚠ Could not save to local folder: permission was denied.
+        </div>
+      );
+    case 'FOLDER_UNAVAILABLE':
+      return (
+        <div style={{ ...boxStyle, background: '#ef444420', border: '1px solid #ef4444', color: '#f87171' }}>
+          ⚠ Recording folder is unavailable. Choose a new one in Storage Settings.
+        </div>
+      );
+    case 'FAILED':
+    default:
+      return (
+        <div style={{ ...boxStyle, background: '#ef444420', border: '1px solid #ef4444', color: '#f87171' }}>
+          ⚠ Could not save to local folder. The recording itself is safe — retry from the Local Inspector.
+        </div>
+      );
+  }
+}

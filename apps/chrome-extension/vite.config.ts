@@ -39,6 +39,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
         inspector: resolve(__dirname, 'src/inspector/index.html'),
+        settings: resolve(__dirname, 'src/settings/index.html'),
         offscreen: resolve(__dirname, 'src/offscreen/offscreen.html'),
         background: resolve(__dirname, 'src/background/service-worker.ts'),
         // meet-detector and recording-widget are intentionally NOT built here.
