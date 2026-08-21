@@ -18,6 +18,7 @@ import { getAllSessions, getSession, getChunksForSession } from '../modules/offl
 import { syncWorker } from '../modules/offline-cache/sync-worker.js';
 import { exportFinalVideoToLocalFolder } from '../modules/local-export/export-final-video.js';
 import { notifyExportOutcomeIfNeeded } from '../modules/local-export/export-notifications.js';
+import { BACKEND_BASE_URL } from '../config/backend-config.js';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 
@@ -266,7 +267,7 @@ async function handleServiceWorkerMessage(
 
       // Backend Session Init REST Handshake
       try {
-        const initResponse = await fetch('http://localhost:4000/api/v1/sessions/init', {
+        const initResponse = await fetch(`${BACKEND_BASE_URL}/api/v1/sessions/init`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-id': 'dev-user-1' },
           body: JSON.stringify({
@@ -434,7 +435,7 @@ async function executeStopRecording(
         }
       });
 
-      const stopResponse = await fetch(`http://localhost:4000/api/v1/sessions/${targetSessionId}/stop`, {
+      const stopResponse = await fetch(`${BACKEND_BASE_URL}/api/v1/sessions/${targetSessionId}/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': 'dev-user-1' },
         body: JSON.stringify({

@@ -1,6 +1,7 @@
 import { LocalVideoChunk } from '@openplan/contracts';
 import { logger } from '@openplan/core';
 import { getUnsyncedChunks, markChunkSyncedAndPurgeBlob, computeSha256 } from './idb-store.js';
+import { BACKEND_BASE_URL } from '../../config/backend-config.js';
 
 export interface SyncWorkerConfig {
   backendBaseUrl?: string;
@@ -21,7 +22,7 @@ export class SyncWorker {
   private onlineListenerAttached: boolean = false;
 
   constructor(config: SyncWorkerConfig = {}) {
-    this.backendBaseUrl = config.backendBaseUrl || 'http://localhost:4000';
+    this.backendBaseUrl = config.backendBaseUrl || BACKEND_BASE_URL;
     this.userId = config.userId || 'dev-user-1';
     this.maxConcurrency = config.maxConcurrency || 2;
     this.maxRetries = config.maxRetries || 5;

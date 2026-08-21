@@ -8,11 +8,8 @@ import {
 } from '../modules/offline-cache/idb-store.js';
 import { exportFinalVideoToLocalFolder } from '../modules/local-export/export-final-video.js';
 import { getExportStatus, ExportStatusRecord } from '../modules/local-export/export-state-store.js';
+import { BACKEND_BASE_URL } from '../config/backend-config.js';
 
-// Same defaults export-final-video.ts uses for the identical endpoint — kept local rather
-// than shared to match this codebase's existing pattern of per-module backend constants
-// (see sync-worker.ts, service-worker.ts, export-final-video.ts).
-const BACKEND_BASE_URL = 'http://localhost:4000';
 const DEFAULT_USER_ID = 'dev-user-1';
 
 /**

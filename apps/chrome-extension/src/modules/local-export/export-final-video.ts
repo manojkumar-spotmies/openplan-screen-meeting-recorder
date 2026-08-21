@@ -4,8 +4,9 @@ import { getStoredDirectoryHandle } from '../local-storage-settings/directory-ha
 import { checkStoredPermission } from '../local-storage-settings/folder-access.js';
 import { generateUniqueFilename } from './filename.js';
 import { setExportStatus } from './export-state-store.js';
+import { BACKEND_BASE_URL } from '../../config/backend-config.js';
 
-const DEFAULT_BACKEND_BASE_URL = 'http://localhost:4000';
+const DEFAULT_BACKEND_BASE_URL = BACKEND_BASE_URL;
 const DEFAULT_USER_ID = 'dev-user-1';
 
 export interface ExportOutcome {
